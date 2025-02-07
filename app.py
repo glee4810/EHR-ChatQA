@@ -32,9 +32,8 @@ file_url = f'https://drive.google.com/uc?id={file_id}&export=download'
 download_and_extract_model(file_url)
 
 with open(".env", "w") as env_file:
-    key = 'auth_token'
-    value = st.secrets[key]
-    env_file.write(f"{key}={value}\n")
+    api_key = st.secrets['OPENAI_API_KEY']
+    env_file.write(f"OPENAI_API_KEY={api_key}\n")
 ####################################################################################################################################
 ####################################################################################################################################
 
