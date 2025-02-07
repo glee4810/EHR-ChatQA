@@ -1,3 +1,5 @@
+# agent.py
+
 import os
 import ast
 import re
@@ -23,7 +25,7 @@ from langchain_community.tools.sql_database.tool import (
     ListSQLDatabaseTool,
     QuerySQLDatabaseTool,
 )
-from langchain_core.messages import SystemMessage, ToolMessage, AIMessage, HumanMessage, convert_to_openai_messages, convert_to_messages
+from langchain_core.messages import SystemMessage, ToolMessage, AIMessage, HumanMessage, convert_to_openai_messages
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_community.vectorstores import FAISS
 from langgraph.checkpoint.memory import MemorySaver
@@ -32,6 +34,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt, Command
 from langchain_core.tools.render import ToolsRenderer, render_text_description
 
+# A helper function for formatting the conversation history (used for logging)
 def get_numbered_history(messages: List) -> str:
     history_lines = []
     turn = 1
@@ -40,7 +43,6 @@ def get_numbered_history(messages: List) -> str:
         header = f"Turn {turn} [{message_type}]:"
         turn += 1
         
-        # Start with the message's main content.
         content_lines = []
         if message.content:
             if message_type == "ToolMessage":
@@ -48,7 +50,6 @@ def get_numbered_history(messages: List) -> str:
             else:
                 content_lines.append(message.content.strip())
         
-        # If this message carries tool call details, print each one.
         if hasattr(message, "tool_calls") and message.tool_calls:
             for tc in message.tool_calls:
                 tool_name = tc.get("name", "UnknownTool")
@@ -58,14 +59,9 @@ def get_numbered_history(messages: List) -> str:
                     f"Action Input: {json.dumps(tool_args, indent=2)}"
                 ]
                 content_lines.append('\n'.join(tool_lines))
-
-        # Combine the message's content and any tool details.
         indented_content = "\n".join("    " + line for line in "\n".join(content_lines).splitlines())
         history_lines.append(f"{header}\n{indented_content}")
-    
-    # Separate each turn with an extra newline.
     return "\n\n".join(history_lines)
-
 
 def parse_sql(response: str) -> str:
     pattern = r'```sql([\s\S]*?)```'
@@ -85,9 +81,6 @@ def parse_json(response: str) -> str:
     raise ValueError("No JSON found in the response")
 
 def query_as_list(db: SQLDatabase, table: str, column: str) -> List[str]:
-    """
-    Query a specific column in a table and return a list of unique cleaned values.
-    """
     query = f"SELECT DISTINCT {column} FROM {table}"
     res = db.run(query)
     res = [el for sub in ast.literal_eval(res) for el in sub if el]
@@ -95,10 +88,8 @@ def query_as_list(db: SQLDatabase, table: str, column: str) -> List[str]:
     return list(set(res))
 
 def _initialize_vector_store(db: SQLDatabase, embeddings: OpenAIEmbeddings, faiss_path: str) -> FAISS:
-    """Initialize or load the FAISS vector store."""
     if os.path.exists(faiss_path):
         return FAISS.load_local(faiss_path, embeddings, allow_dangerous_deserialization=True)
-
     columns_to_retrieve = {
         "d_icd_diagnoses": ["long_title"],
         "d_icd_procedures": ["long_title"],
@@ -106,7 +97,6 @@ def _initialize_vector_store(db: SQLDatabase, embeddings: OpenAIEmbeddings, fais
         "d_items": ["label"],
         "d_labitems": ["label"]
     }
-
     texts = []
     metadatas = []
     for table, columns in columns_to_retrieve.items():
@@ -114,7 +104,6 @@ def _initialize_vector_store(db: SQLDatabase, embeddings: OpenAIEmbeddings, fais
             values = query_as_list(db, table, column)
             texts.extend(values)
             metadatas.extend([{"table": table, "column": column} for _ in values])
-
     vector_store = FAISS.from_texts(texts=texts, embedding=embeddings, metadatas=metadatas)
     vector_store.save_local(faiss_path)
     return vector_store
@@ -129,7 +118,7 @@ class ValueRetrieverInput(BaseModel):
     k: Optional[int] = Field(
         10,
         description="The number of sample or similar values to return."
-    )    
+    )
 
 def value_retriever_tool_func(
     table: str,
@@ -174,18 +163,16 @@ def value_retriever_tool_func(
     except Exception as e:
         return f"Error retrieving values: {str(e)}"
 
+# Define the type for the agent’s state.
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     tool_call_cache: dict
 
-def create_db_agent(
-    model_name: str = "gpt-4o-mini",
-    database_path: str = "mimic_iv.sqlite",
-    faiss_path: str = "faiss_index",
-    config: dict = {}
-):
-
-    # Initialize the LLM, database, and embeddings.
+######################################################
+# Cached heavy initialization
+@st.cache_resource(show_spinner=False)
+def get_static_agent(model_name: str, database_path: str, faiss_path: str, config: dict):
+    # Initialize heavy resources.
     llm = ChatOpenAI(model_name=model_name, temperature=0.7)
     db = SQLDatabase.from_uri(f"sqlite:///{database_path}")
     sql_db_list_tables = ListSQLDatabaseTool(db=db)
@@ -243,7 +230,6 @@ Final Answer: [Your final SQL query, not plain text]
 After the conversation ends, your final SQL query will be executed using the 'sql_db_query' tool, and the query result will be returned.
 
 Begin!
-
 """
         system_prompt = SystemMessage(content=system_prompt_content)
         conversation = [system_prompt] + state["messages"]
@@ -346,73 +332,35 @@ Begin!
     memory = MemorySaver()
     graph = graph.compile(checkpointer=memory)
 
-    agent = {
+    return {
         "graph": graph,
-        "dialog_state": AgentState(messages=[], tool_call_cache={}),
-        "sql_db_query": sql_db_query,
-        "config": config
+        "sql_db_query": sql_db_query
     }
-    return agent
 
-
-# def run_agent_stream(agent: dict, user_input: str, config: dict = {}):
-#     """
-#     Runs (or resumes) the agent, using the provided user_input.
-#     This function uses the agent's dialog_state and the config stored in Streamlit globals.
-#     """
-#     stream_buffer = io.StringIO()
-
-#     prefix = "Question: "
-#     agent["dialog_state"]["messages"].append(HumanMessage(content=prefix + user_input))
-#     with contextlib.redirect_stdout(stream_buffer):
-#         final_state = agent["graph"].invoke(agent["dialog_state"], config)
-#     agent["dialog_state"] = final_state
-
-#     stream_buffer.seek(0)
-#     intermediate_output = stream_buffer.read()
-
-#     results = []
-#     if intermediate_output:
-#         for line in intermediate_output.splitlines():
-#             results.append({"type": "intermediate", "text": line})
-#     last_message = agent["dialog_state"]["messages"][-1]
-#     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-#         for tool_call in last_message.tool_calls:
-#             if tool_call["name"] == "human_feedback":
-#                 print('st.session_state.tool_call_id - inside', tool_call["id"])
-#                 results.append({"type": "interrupt", "text": tool_call["args"].get("question", "").strip(), "tool_call_id": tool_call["id"]})
-#                 break
-#     if "Final Answer:" in last_message.content:
-#         response = last_message.content
-#         try:
-#             query_text = response.split("Final Answer:")[1].strip()
-#             query_result = agent["sql_db_query"].invoke({"query": query_text})
-#             response += f"\n\nQuery Result:\n{query_result}"
-#         except Exception as e:
-#             response += f"\n\nFailed to execute query: {e}"
-#         results.append({"type": "final", "text": response})
-#     else:
-#         results.append({"type": "final", "text": last_message.content})
-#     return results
-
+# Build the agent using the cached heavy resources and a fresh mutable state.
+def create_db_agent(
+    model_name: str = "gpt-4o-mini",
+    database_path: str = "mimic_iv.sqlite",
+    faiss_path: str = "faiss_index",
+    config: dict = {}
+):
+    static_agent = get_static_agent(model_name, database_path, faiss_path, config)
+    return {
+        "graph": static_agent["graph"],
+        "sql_db_query": static_agent["sql_db_query"],
+        "config": config,
+        "dialog_state": AgentState(messages=[], tool_call_cache={})
+    }
 
 def run_agent_stream(agent: dict, user_input: str, config: dict = {}):
-    """
-    Runs (or resumes) the agent using the provided user_input and streams intermediate output
-    immediately. This implementation uses a worker thread and a queue to yield intermediate steps
-    as they are printed.
-    """
-    # Append the user's question to the dialog state.
+    # Append the user's question.
     prefix = "Question: "
     agent["dialog_state"]["messages"].append(HumanMessage(content=prefix + user_input))
 
-    # Create a queue to hold output from the agent.
     output_queue = queue.Queue()
 
-    # Define a writer that pushes text into the queue.
     class QueueWriter:
         def write(self, s):
-            # Avoid putting empty or whitespace-only strings.
             if s.strip():
                 output_queue.put(s)
         def flush(self):
@@ -420,21 +368,15 @@ def run_agent_stream(agent: dict, user_input: str, config: dict = {}):
 
     writer = QueueWriter()
 
-    # Worker function that runs the agent's graph invocation.
     def worker():
-        # Instead of redirecting stdout to a StringIO buffer,
-        # we redirect it to our QueueWriter so that every print call is sent to the queue.
         with contextlib.redirect_stdout(writer):
             final_state = agent["graph"].invoke(agent["dialog_state"], config)
         agent["dialog_state"] = final_state
-        # Use None as a sentinel to signal the end of output.
         output_queue.put(None)
 
-    # Start the worker thread.
     thread = threading.Thread(target=worker)
     thread.start()
 
-    # Yield intermediate output as it is produced.
     while True:
         try:
             chunk = output_queue.get(timeout=0.1)
@@ -444,14 +386,12 @@ def run_agent_stream(agent: dict, user_input: str, config: dict = {}):
             continue
         if chunk is None:
             break
-        # Yield each non-empty line from the chunk.
         for line in chunk.splitlines():
             if line.strip():
                 yield {"type": "intermediate", "text": line}
 
     thread.join()
 
-    # After the worker finishes, process the final state.
     last_message = agent["dialog_state"]["messages"][-1]
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         for tool_call in last_message.tool_calls:
@@ -472,10 +412,9 @@ def run_agent_stream(agent: dict, user_input: str, config: dict = {}):
             response += f"\n\nFailed to execute query: {e}"
         yield {"type": "final", "text": response}
     else:
-        text = last_message.content
-        match = re.search(r'"question":\s*"([^"]+)"', text)
+        match = re.search(r'"question":\s*"([^"]+)"', last_message.content)
         if match:
             extracted_question = match.group(1)
             yield {"type": "other", "text": extracted_question}
         else:
-            yield {"type": "other", "text": text}
+            yield {"type": "other", "text": last_message.content}

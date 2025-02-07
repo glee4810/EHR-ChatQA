@@ -31,9 +31,10 @@ file_url = f'https://drive.google.com/uc?id={file_id}&export=download'
 # Call the function (this will be cached)
 download_and_extract_model(file_url)
 
-with open(".env", "w") as env_file:
-    api_key = st.secrets['OPENAI_API_KEY']
-    env_file.write(f"OPENAI_API_KEY={api_key}\n")
+if not os.path.exists(".env"):
+    with open(".env", "w") as env_file:
+        api_key = st.secrets['OPENAI_API_KEY']
+        env_file.write(f"OPENAI_API_KEY={api_key}\n")
 ####################################################################################################################################
 ####################################################################################################################################
 
@@ -96,13 +97,6 @@ def format_text(text: str, expanded: bool = False) -> str:
             "</details>"
         )
     return details_html
-
-def format_expanded_text(text: str) -> str:
-    lines = text.splitlines()
-    processed_lines = []
-    for line in lines:
-        processed_lines.append(line)
-    return "<br>".join(processed_lines)
 
 def update_intermediate_message(details_html: str):
     if "intermediate_message_index" in st.session_state:
