@@ -184,7 +184,7 @@ def get_static_agent(model_name: str, database_path: str, faiss_path: str, confi
     sql_db_schema = InfoSQLDatabaseTool(db=db)
     sql_db_query = QuerySQLDatabaseTool(db=db)
     faiss_path = 'faiss_index-'+embedding_model
-    embeddings = OpenAIEmbeddings(model=model)
+    embeddings = OpenAIEmbeddings(model=embedding_model)
     vector_store = _initialize_vector_store(db, embeddings, faiss_path)
 
     def _value_retriever_wrapper(table, column, value=None, k=10) -> str:
