@@ -34,6 +34,11 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt, Command
 from langchain_core.tools.render import ToolsRenderer, render_text_description
 
+####################################################################
+embedding_model = 'text-embedding-3-small'
+# embedding_model = 'text-embedding-3-large'
+####################################################################
+
 # A helper function for formatting the conversation history (used for logging)
 def get_numbered_history(messages: List) -> str:
     history_lines = []
@@ -178,7 +183,8 @@ def get_static_agent(model_name: str, database_path: str, faiss_path: str, confi
     sql_db_list_tables = ListSQLDatabaseTool(db=db)
     sql_db_schema = InfoSQLDatabaseTool(db=db)
     sql_db_query = QuerySQLDatabaseTool(db=db)
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+    faiss_path = 'faiss_index-'+embedding_model
+    embeddings = OpenAIEmbeddings(model=model)
     vector_store = _initialize_vector_store(db, embeddings, faiss_path)
 
     def _value_retriever_wrapper(table, column, value=None, k=10) -> str:

@@ -13,29 +13,28 @@ from langgraph.types import Command, interrupt
 from langchain_core.messages import SystemMessage, ToolMessage, AIMessage, HumanMessage, convert_to_openai_messages, convert_to_messages
 
 ####################################################################################################################################
-####################################################################################################################################
-import os
-import gdown
-import zipfile
+if not os.path.exists("faiss_index-text-embedding-3-small"):
+    import os
+    import gdown
+    import zipfile
 
-@st.cache_data(show_spinner=False)
-def download_and_extract_model(url, output_zip="faiss_index.zip", extract_to="."):
-    if not os.path.exists(output_zip):
-        gdown.download(url, output_zip, quiet=False)
-    with zipfile.ZipFile(output_zip, 'r') as zip_ref:
-        zip_ref.extractall(extract_to)
+    @st.cache_data(show_spinner=False)
+    def download_and_extract_model(url, output_zip="faiss_index-text-embedding-3-small.zip", extract_to="."):
+        if not os.path.exists(output_zip):
+            gdown.download(url, output_zip, quiet=False)
+        with zipfile.ZipFile(output_zip, 'r') as zip_ref:
+            zip_ref.extractall(extract_to)
 
-file_id = '1KtDmjjqdJDIXjAw8iRQpvz6XhGJjvqRJ'
-file_url = f'https://drive.google.com/uc?id={file_id}&export=download'
+    file_id = '1_2mfOKJgy5sBOi-enmuz0uBfNxena3s-'
+    file_url = f'https://drive.google.com/uc?id={file_id}&export=download'
 
-# Call the function (this will be cached)
-download_and_extract_model(file_url)
+    # Call the function (this will be cached)
+    download_and_extract_model(file_url)
 
 if not os.path.exists(".env"):
     with open(".env", "w") as env_file:
         api_key = st.secrets['OPENAI_API_KEY']
         env_file.write(f"OPENAI_API_KEY={api_key}\n")
-####################################################################################################################################
 ####################################################################################################################################
 
 load_dotenv()
