@@ -1,10 +1,7 @@
 # streamlit run app.py --server.port 8502
 
-import io
-import re
+import os
 import time
-import sys
-import contextlib
 from dotenv import load_dotenv
 import streamlit as st
 from agent import create_db_agent, run_agent_stream
@@ -14,7 +11,6 @@ from langchain_core.messages import SystemMessage, ToolMessage, AIMessage, Human
 
 ####################################################################################################################################
 if not os.path.exists("faiss_index-text-embedding-3-small"):
-    import os
     import gdown
     import zipfile
 
