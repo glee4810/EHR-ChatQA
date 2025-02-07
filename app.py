@@ -115,7 +115,7 @@ def run_app():
     model_name = 'gpt-4o-mini'
     database_path = "mimic_iv.sqlite"
     st.set_page_config(page_title="Interact with the Database", page_icon="👋")
-    st.title("Chat with DB Agent")
+    st.title("Chat with Database Agent")
     st.text(f"Powered by {model_name}")
 
     with st.sidebar:
