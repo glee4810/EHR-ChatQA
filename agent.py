@@ -34,11 +34,6 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt, Command
 from langchain_core.tools.render import ToolsRenderer, render_text_description
 
-####################################################################
-embedding_model = 'text-embedding-3-small'
-# embedding_model = 'text-embedding-3-large'
-####################################################################
-
 # A helper function for formatting the conversation history (used for logging)
 def get_numbered_history(messages: List) -> str:
     history_lines = []
@@ -173,10 +168,15 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     tool_call_cache: dict
 
-######################################################
-# Cached heavy initialization
+# Build the agent using the cached heavy resources and a fresh mutable state.
 @st.cache_resource(show_spinner=False)
-def get_static_agent(model_name: str, database_path: str, faiss_path: str, config: dict):
+def create_db_agent(
+    model_name: str = "gpt-4o-mini",
+    embedding_model: str = "text-embedding-3-small",
+    database_path: str = "mimic_iv.sqlite",
+    faiss_path: str = "faiss_index",
+    config: dict = {}
+):
     # Initialize heavy resources.
     llm = ChatOpenAI(model_name=model_name, temperature=0.7)
     db = SQLDatabase.from_uri(f"sqlite:///{database_path}")
@@ -340,20 +340,7 @@ Begin!
 
     return {
         "graph": graph,
-        "sql_db_query": sql_db_query
-    }
-
-# Build the agent using the cached heavy resources and a fresh mutable state.
-def create_db_agent(
-    model_name: str = "gpt-4o-mini",
-    database_path: str = "mimic_iv.sqlite",
-    faiss_path: str = "faiss_index",
-    config: dict = {}
-):
-    static_agent = get_static_agent(model_name, database_path, faiss_path, config)
-    return {
-        "graph": static_agent["graph"],
-        "sql_db_query": static_agent["sql_db_query"],
+        "sql_db_query": sql_db_query,
         "config": config,
         "dialog_state": AgentState(messages=[], tool_call_cache={})
     }

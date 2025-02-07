@@ -10,12 +10,18 @@ from langgraph.types import Command, interrupt
 from langchain_core.messages import SystemMessage, ToolMessage, AIMessage, HumanMessage, convert_to_openai_messages, convert_to_messages
 
 ####################################################################################################################################
-if not os.path.exists("faiss_index-text-embedding-3-small"):
+
+####################################################################
+embedding_model = 'text-embedding-3-small'
+# embedding_model = 'text-embedding-3-large'
+####################################################################
+
+if not os.path.exists("faiss_index-"+embedding_model):
     import gdown
     import zipfile
 
     @st.cache_data(show_spinner=False)
-    def download_and_extract_model(url, output_zip="faiss_index-text-embedding-3-small.zip", extract_to="."):
+    def download_and_extract_model(url, output_zip="faiss_index-"+embedding_model+".zip", extract_to="."):
         if not os.path.exists(output_zip):
             gdown.download(url, output_zip, quiet=False)
         with zipfile.ZipFile(output_zip, 'r') as zip_ref:
@@ -135,7 +141,7 @@ def run_app():
             "recursion_limit": 20
         }
     if "agent" not in st.session_state:
-        st.session_state.agent = create_db_agent(model_name, database_path, config=st.session_state.config)
+        st.session_state.agent = create_db_agent(model_name=model_name, embedding_model=embedding_model, database_path=database_path, config=st.session_state.config)
     if "tool_call_id" not in st.session_state:
         st.session_state.tool_call_id = None
 
@@ -147,7 +153,7 @@ def run_app():
             "configurable": {"thread_id": "user_session_1"},
             "recursion_limit": 20
         }
-        st.session_state.agent = create_db_agent(model_name, database_path, config=st.session_state.config)
+        st.session_state.agent = create_db_agent(model_name=model_name, embedding_model=embedding_model, database_path=database_path, config=st.session_state.config)
         st.session_state.tool_call_id = None
         st.rerun()
 
