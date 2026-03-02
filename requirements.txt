@@ -1,0 +1,17 @@
+dask==2025.9.1
+func_timeout==4.3.5
+langchain_community==0.3.23
+langchain_core==0.3.66
+litellm==1.77.3
+matplotlib==3.10.6
+numpy==2.3.3
+pandas==2.3.2
+pydantic==2.11.9
+python-dotenv==1.1.1
+python_dateutil==2.9.0.post0
+SQLAlchemy==2.0.43
+sqlparse==0.5.3
+streamlit==1.45.1
+tqdm==4.67.1
+faiss-cpu==1.7.4
+genai==2.1.0

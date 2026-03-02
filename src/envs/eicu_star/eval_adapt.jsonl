@@ -1,0 +1,512 @@
+[
+    {
+        "task_id": "0",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to know the number of patients who were prescribed a medication recorded exactly as \"glucophage\". If there are patients prescribed under the exact name 'glucophage', you want to know the number of patients. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three). If no patients are prescribed under the exact name 'glucophage,' you want to ask the same question using its generic name instead.",
+        "gold_sql": "WITH brand_count AS ( SELECT COUNT(DISTINCT ip.patient_id) AS cnt FROM icupatient ip JOIN prescription p ON ip.unit_id = p.unit_id WHERE p.drug_name = 'glucophage' ), generic_count AS ( SELECT COUNT(DISTINCT ip.patient_id) AS cnt FROM icupatient ip JOIN prescription p ON ip.unit_id = p.unit_id WHERE p.drug_name LIKE '%metformin%' ) SELECT CASE WHEN brand_count.cnt > 0 THEN brand_count.cnt ELSE generic_count.cnt END AS patient_count FROM brand_count, generic_count;",
+        "gold_answer": [
+            [
+                "six"
+            ]
+        ]
+    },
+    {
+        "task_id": "1",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to find the average ICU length of stay for sepsis patients who were prescribed a medication recorded exactly as 'tazocin'. When calculating the average length of stay, you want to include only the first ICU admission for each patient where both the sepsis diagnosis and the requested medication prescription occurred. When querying for patients diagnosed with sepsis, you want to include diagnosis names that contain the words 'sepsis' or 'septic', as the diagnosis names may not be standardized. You want the final result in days. You want the result rounded to four decimal places. If no sepsis patients were prescribed medication under the exact name 'tazocin', you want to repeat the same question using medications containing Tazocin's generic and other brand names.",
+        "gold_sql": "WITH first_sepsis_diagnosis AS ( SELECT c.unit_id, MIN(c.condition_time) AS first_sepsis_time FROM condition c WHERE c.condition_name LIKE '%sepsis%' OR c.condition_name LIKE '%septic%' GROUP BY c.unit_id ), tazocin_exact_admissions AS ( SELECT DISTINCT pr.unit_id FROM prescription pr WHERE pr.drug_name = 'tazocin' ), tazocin_component_admissions AS ( SELECT DISTINCT pr.unit_id FROM prescription pr WHERE pr.drug_name LIKE '%piperacillin%tazobactam%' OR pr.drug_name LIKE '%tazobactam%piperacillin%' OR pr.drug_name LIKE '%zosyn%' ), tazocin_final_admissions AS ( SELECT unit_id FROM tazocin_exact_admissions WHERE EXISTS (SELECT 1 FROM tazocin_exact_admissions) UNION ALL SELECT unit_id FROM tazocin_component_admissions WHERE NOT EXISTS (SELECT 1 FROM tazocin_exact_admissions) ), sepsis_tazocin_stays AS ( SELECT ip.patient_id, ip.unit_id, ip.unit_admit_time, ip.unit_discharge_time, ROW_NUMBER() OVER (PARTITION BY ip.patient_id ORDER BY ip.unit_admit_time) AS stay_rank FROM icupatient ip JOIN first_sepsis_diagnosis fsd ON ip.unit_id = fsd.unit_id JOIN tazocin_final_admissions t ON ip.unit_id = t.unit_id WHERE ip.unit_admit_time IS NOT NULL AND ip.unit_discharge_time IS NOT NULL ), first_sepsis_stay_with_tazocin AS ( SELECT unit_admit_time, unit_discharge_time FROM sepsis_tazocin_stays WHERE stay_rank = 1 ) SELECT ROUND(AVG(JULIANDAY(unit_discharge_time) - JULIANDAY(unit_admit_time)), 4) AS average_icu_stay_days FROM first_sepsis_stay_with_tazocin;",
+        "gold_answer": [
+            [
+                3.6969
+            ]
+        ]
+    },
+    {
+        "task_id": "2",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to find the most common diagnosis name received by patients prescribed a medication recorded exactly as 'advil' during the same ICU admission. If multiple diagnosis names occur with the same highest frequency, you want to know all of them. If a patient was prescribed the requested medication multiple times, you want to include only the ICU admission associated with the first prescription in the results. If a patient's ICU admission record contains multiple instances of the same diagnosis name, you want to count it only once in the results. You want the answer to be based on the exact diagnosis name recorded in the database. If no patients were prescribed medication under the exact name 'advil,' you want to repeat the same question using medications containing Advil's generic name or its brand name.",
+        "gold_sql": "WITH AdvilCheck AS ( SELECT COUNT(*) AS advil_count FROM prescription WHERE drug_name = 'advil' ), FirstPrescription AS ( SELECT ip.patient_id, ip.unit_id, pr.medication_start_time, ROW_NUMBER() OVER ( PARTITION BY ip.patient_id ORDER BY pr.medication_start_time ) AS rn FROM prescription pr JOIN icupatient ip ON pr.unit_id = ip.unit_id JOIN AdvilCheck ac WHERE (ac.advil_count > 0 AND pr.drug_name = 'advil') OR (ac.advil_count = 0 AND (pr.drug_name LIKE '%ibuprofen%' OR pr.drug_name LIKE '%motrin%')) GROUP BY ip.patient_id, ip.unit_id, pr.medication_start_time ), SelectedICUStays AS ( SELECT patient_id, unit_id FROM FirstPrescription WHERE rn = 1 ), UniqueDiagnoses AS ( SELECT DISTINCT c.unit_id, c.condition_name FROM SelectedICUStays s JOIN condition c ON s.unit_id = c.unit_id ), DiagnosisCounts AS ( SELECT condition_name, COUNT(*) AS diag_count, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) AS rank FROM UniqueDiagnoses GROUP BY condition_name ) SELECT condition_name FROM DiagnosisCounts WHERE rank = 1 ORDER BY rank;",
+        "gold_answer": [
+            [
+                "pneumonia"
+            ],
+            [
+                "change in mental status"
+            ]
+        ]
+    },
+    {
+        "task_id": "3",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to know the percentage of patients diagnosed with anxiety who were prescribed a medication recorded exactly as 'loreev xr' at least once during the same ICU admission. If such patients exist, you want the percentage (%) of patients with an anxiety diagnosis who were prescribed Loreev XR during the same ICU admission. You want the result rounded to four decimal places. If no anxiety patients were prescribed medication under the exact name 'loreev xr,' you want to repeat the same question using medications containing Loreev XR's generic or other brand names.",
+        "gold_sql": "WITH total_anxiety_patients AS ( SELECT COUNT(DISTINCT ip.patient_id) AS total_count FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE c.condition_name LIKE '%anxiety%' ), loreev_exact_patients AS ( SELECT DISTINCT ip.patient_id FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id JOIN prescription pr ON ip.unit_id = pr.unit_id WHERE c.condition_name LIKE '%anxiety%' AND pr.drug_name = 'loreev xr' ), loreev_component_patients AS ( SELECT DISTINCT ip.patient_id FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id JOIN prescription pr ON ip.unit_id = pr.unit_id WHERE c.condition_name LIKE '%anxiety%' AND pr.drug_name LIKE '%lorazepam%' ), combined_qualifying_patients AS ( SELECT patient_id FROM loreev_exact_patients WHERE EXISTS (SELECT 1 FROM loreev_exact_patients) UNION ALL SELECT patient_id FROM loreev_component_patients WHERE NOT EXISTS (SELECT 1 FROM loreev_exact_patients) ) SELECT ROUND( (SELECT COUNT(DISTINCT patient_id) FROM combined_qualifying_patients) * 100.0 / (SELECT total_count FROM total_anxiety_patients), 4 ) AS percentage FROM combined_qualifying_patients LIMIT 1;",
+        "gold_answer": [
+            [
+                41.6667
+            ]
+        ]
+    },
+    {
+        "task_id": "4",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "You are assisting with a clinical study evaluating antiplatelet therapy prescribing patterns in female ICU patients with acute myocardial infarction. First, identify female patients diagnosed with acute myocardial infarction (both NSTEMI and STEMI) during any hospital admission. Among these patients, check if any have been prescribed a medication recorded exactly as 'brilinta' during the same hospital admission as their diagnosis. If so, report how many such patients exist. If no patient was prescribed brilinta, broaden the search to include any medication containing ticagrelor, excluding brilinta, and report the count. If neither category yields results, report that no matching patients were found. You want the number of patients reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three).",
+        "gold_sql": "WITH AMIAdmissions AS ( SELECT DISTINCT ip.patient_id, ip.hosp_id FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%acute myocardial infarction%' AND ip.gender = 'female' ), BrilintaPatients AS ( SELECT COUNT(DISTINCT aa.patient_id) AS cnt FROM AMIAdmissions aa JOIN icupatient ip ON aa.patient_id = ip.patient_id AND aa.hosp_id = ip.hosp_id JOIN prescription pr ON ip.unit_id = pr.unit_id WHERE pr.drug_name = 'brilinta' ), TicagrelorPatients AS ( SELECT COUNT(DISTINCT aa.patient_id) AS cnt FROM AMIAdmissions aa JOIN icupatient ip ON aa.patient_id = ip.patient_id AND aa.hosp_id = ip.hosp_id JOIN prescription pr ON ip.unit_id = pr.unit_id WHERE pr.drug_name LIKE '%ticagrelor%' AND pr.drug_name != 'brilinta' ) SELECT CASE WHEN (SELECT cnt FROM BrilintaPatients) > 0 THEN (SELECT cnt FROM BrilintaPatients) WHEN (SELECT cnt FROM TicagrelorPatients) > 0 THEN (SELECT cnt FROM TicagrelorPatients) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "two"
+            ]
+        ]
+    },
+    {
+        "task_id": "5",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you first want to identify patients diagnosed with anxiety. Then, you want to know the percentage (%) of those patients who subsequently received a medication recorded exactly as \"remimazolam\" during the same ICU admission. You want the result rounded to four decimal places. If no patients were prescribed \"remimazolam,\" you want the percentage (%) of all anxiety patients who were prescribed a medication in the same drug class as remimazolam after the diagnosis during the same ICU admission.",
+        "gold_sql": "WITH anxiety_diagnoses AS ( SELECT ip.patient_id, ip.unit_id, MIN(c.condition_time) AS condition_time FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%anxiety%' GROUP BY ip.patient_id, ip.unit_id ), remimazolam_anxiety_patients AS ( SELECT DISTINCT a.patient_id FROM anxiety_diagnoses a JOIN prescription pr ON pr.unit_id = a.unit_id WHERE pr.drug_name = 'remimazolam' AND pr.medication_start_time > a.condition_time ), benzo_anxiety_patients AS ( SELECT DISTINCT a.patient_id FROM anxiety_diagnoses a JOIN prescription pr ON pr.unit_id = a.unit_id WHERE ( pr.drug_name LIKE '%valium%' OR pr.drug_name LIKE '%xanax%' OR pr.drug_name LIKE '%ativan%' OR pr.drug_name LIKE '%lorazepam%' OR pr.drug_name LIKE '%klonopin%' OR pr.drug_name LIKE '%midazolam%' OR pr.drug_name LIKE '%diazepam%' OR pr.drug_name LIKE '%versed%' OR pr.drug_name LIKE '%alprazolam%' OR pr.drug_name LIKE '%clonazepam%' OR pr.drug_name LIKE '%restoril%' OR pr.drug_name LIKE '%remimazolam%' ) AND pr.medication_start_time > a.condition_time AND NOT EXISTS (SELECT 1 FROM remimazolam_anxiety_patients) ), combined_patients AS ( SELECT patient_id FROM remimazolam_anxiety_patients UNION ALL SELECT patient_id FROM benzo_anxiety_patients ) SELECT ROUND( 100.0 * (SELECT COUNT(DISTINCT patient_id) FROM combined_patients) / (SELECT COUNT(DISTINCT patient_id) FROM anxiety_diagnoses), 4 ) AS percentage;",
+        "gold_answer": [
+            [
+                33.3333
+            ]
+        ]
+    },
+    {
+        "task_id": "6",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "You are assisting with a clinical study evaluating antidepressant prescribing patterns in ICU patients diagnosed with depression. First, identify patients diagnosed with depression (including all severity levels) during any ICU admission. Among these patients, check if any have been prescribed a medication recorded exactly as 'fluoxetine' after their depression diagnosis within the same ICU admission. If so, list the patient IDs. If no patient was prescribed fluoxetine, broaden the search to include any other SSRI prescribed after their diagnosis, excluding fluoxetine, and list the patient IDs. If neither category yields results, report that no matching patients were found.",
+        "gold_sql": "WITH DepressionDiagnoses AS ( SELECT c.unit_id, ip.patient_id, MIN(c.condition_time) AS first_depression_time FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%depression%' GROUP BY c.unit_id, ip.patient_id ), FluoxetinePatients AS ( SELECT DISTINCT dd.patient_id FROM DepressionDiagnoses dd JOIN prescription pr ON pr.unit_id = dd.unit_id WHERE pr.drug_name = 'fluoxetine' AND pr.medication_start_time > dd.first_depression_time ), SSRIPatients AS ( SELECT DISTINCT dd.patient_id FROM DepressionDiagnoses dd JOIN prescription pr ON pr.unit_id = dd.unit_id WHERE ( pr.drug_name LIKE '%citalopram%' OR pr.drug_name LIKE '%sertraline%' OR pr.drug_name LIKE '%escitalopram%' OR pr.drug_name LIKE '%fluvoxamine%' OR pr.drug_name LIKE '%paroxetine%' ) AND pr.drug_name NOT LIKE '%fluoxetine%' AND pr.medication_start_time > dd.first_depression_time ), combined AS ( SELECT patient_id FROM FluoxetinePatients WHERE EXISTS (SELECT 1 FROM FluoxetinePatients) UNION ALL SELECT patient_id FROM SSRIPatients WHERE NOT EXISTS (SELECT 1 FROM FluoxetinePatients) ) SELECT patient_id FROM combined ORDER BY patient_id;",
+        "gold_answer": [
+            [
+                "030-10194"
+            ]
+        ]
+    },
+    {
+        "task_id": "7",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to check if a medication recorded exactly as 'methylprednisolone' was prescribed to patients diagnosed with rheumatoid arthritis after the diagnosis during the same ICU admission. If found, you want to know the list of exact drug names recorded. If no patients were prescribed a medication under the exact name 'methylprednisolone,' you want to repeat the same question using medications in the same drug class as methylprednisolone. If no medications in that drug class are found either, end the conversation.",
+        "gold_sql": "WITH ra_units AS ( SELECT ip.unit_id, ip.patient_id, MIN(c.condition_time) AS first_ra_time FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name = 'rheumatoid arthritis' GROUP BY ip.unit_id, ip.patient_id ), methylprednisolone_drugs AS ( SELECT DISTINCT pr.drug_name FROM ra_units ra JOIN prescription pr ON pr.unit_id = ra.unit_id WHERE pr.drug_name = 'methylprednisolone' AND pr.medication_start_time > ra.first_ra_time ), other_corticosteroid_drugs AS ( SELECT DISTINCT pr.drug_name FROM ra_units ra JOIN prescription pr ON pr.unit_id = ra.unit_id WHERE ( pr.drug_name LIKE '%prednisone%' OR pr.drug_name LIKE '%prednisolone%' OR pr.drug_name LIKE '%dexamethasone%' OR pr.drug_name LIKE '%hydrocortisone%' OR pr.drug_name LIKE '%cortisone%' OR pr.drug_name LIKE '%budesonide%' OR pr.drug_name LIKE '%triamcinolone%' OR pr.drug_name LIKE '%betamethasone%' ) AND pr.drug_name NOT LIKE '%methylprednisolone%' AND pr.medication_start_time > ra.first_ra_time ), combined AS ( SELECT drug_name FROM methylprednisolone_drugs WHERE EXISTS (SELECT 1 FROM methylprednisolone_drugs) UNION ALL SELECT drug_name FROM other_corticosteroid_drugs WHERE NOT EXISTS (SELECT 1 FROM methylprednisolone_drugs) ) SELECT drug_name FROM combined ORDER BY drug_name;",
+        "gold_answer": [
+            [
+                "prednisone"
+            ]
+        ]
+    },
+    {
+        "task_id": "8",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to analyze beta-blocker prescription patterns in patients with atrial flutter. Specifically, you want to find the percentage of patients diagnosed with various types of atrial flutter who were not prescribed a beta-blocker during the same ICU admission. You want to first check if any of those patients were prescribed a medication recorded exactly as 'sotalol' in the same ICU record. If no patients were prescribed a medication under the exact name 'sotalol,' you want to repeat the same question using medications in the same drug class as sotalol. If a patient has received the diagnosis multiple times, you want to include only the ICU record associated with the first diagnosis in the calculation. You want the result in percentage (%) rounded to four decimal places. If no beta-blockers are found either, end the conversation.",
+        "gold_sql": "WITH RankedDiagnosis AS ( SELECT ip.patient_id, c.unit_id, c.condition_time, ROW_NUMBER() OVER ( PARTITION BY ip.patient_id ORDER BY c.condition_time, c.unit_id ) AS rn FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE c.condition_name LIKE '%atrial flutter%' ), FirstAtrialFlutter AS ( SELECT patient_id, unit_id FROM RankedDiagnosis WHERE rn = 1 ), sotalol_patients AS ( SELECT DISTINCT af.patient_id FROM FirstAtrialFlutter af JOIN prescription pr ON af.unit_id = pr.unit_id WHERE pr.drug_name = 'sotalol' ), other_beta_blocker_patients AS ( SELECT DISTINCT af.patient_id FROM FirstAtrialFlutter af JOIN prescription pr ON af.unit_id = pr.unit_id WHERE pr.drug_name LIKE '%atenolol%' OR pr.drug_name LIKE '%carvedilol%' OR pr.drug_name LIKE '%labetalol%' OR pr.drug_name LIKE '%propranolol%' OR pr.drug_name LIKE '%timolol%' OR pr.drug_name LIKE '%metoprolol%' OR pr.drug_name LIKE '%bisoprolol%' OR pr.drug_name LIKE '%nadolol%' OR pr.drug_name LIKE '%nebivolol%' OR pr.drug_name LIKE '%esmolol%' ), total_patients AS ( SELECT COUNT(DISTINCT patient_id) AS total_count FROM FirstAtrialFlutter ), no_sotalol_count AS ( SELECT COUNT(DISTINCT af.patient_id) AS cnt FROM FirstAtrialFlutter af LEFT JOIN sotalol_patients sp ON af.patient_id = sp.patient_id WHERE sp.patient_id IS NULL ), no_other_bb_count AS ( SELECT COUNT(DISTINCT af.patient_id) AS cnt FROM FirstAtrialFlutter af LEFT JOIN other_beta_blocker_patients obp ON af.patient_id = obp.patient_id WHERE obp.patient_id IS NULL ) SELECT CASE WHEN EXISTS (SELECT 1 FROM sotalol_patients) THEN ROUND( 100.0 * (SELECT cnt FROM no_sotalol_count) / (SELECT total_count FROM total_patients), 4 ) WHEN EXISTS (SELECT 1 FROM other_beta_blocker_patients) THEN ROUND( 100.0 * (SELECT cnt FROM no_other_bb_count) / (SELECT total_count FROM total_patients), 4 ) ELSE NULL END AS percentage;",
+        "gold_answer": [
+            [
+                60.0
+            ]
+        ]
+    },
+    {
+        "task_id": "9",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to analyze prescription patterns for heart failure. Specifically, you want to find the percentage of patients diagnosed with heart failure who were prescribed a medication recorded exactly as 'finerenone' during the same ICU visit. If a patient's ICU admission record contains multiple instances of the same condition, you want to count it only once per patient. You want the result in percentage (%) rounded to four decimal places. If no patients were prescribed a medication under the exact name 'finerenone,' you want to repeat the same question using medications in the same drug class as Finerenone. If no mineralocorticoid receptor antagonists are found either, end the conversation.",
+        "gold_sql": "WITH heart_failure_units AS ( SELECT DISTINCT ip.patient_id, ip.unit_id FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE c.condition_name LIKE '%heart failure%' ), finerenone_hf_patients AS ( SELECT DISTINCT hfu.patient_id FROM heart_failure_units hfu JOIN prescription p ON hfu.unit_id = p.unit_id WHERE p.drug_name = 'finerenone' ), class_hf_patients AS ( SELECT DISTINCT hfu.patient_id FROM heart_failure_units hfu JOIN prescription p ON hfu.unit_id = p.unit_id WHERE (p.drug_name LIKE '%spironolactone%' OR p.drug_name LIKE '%eplerenone%') ), total_hf_patients AS ( SELECT COUNT(DISTINCT patient_id) AS total_count FROM heart_failure_units ) SELECT CASE WHEN EXISTS (SELECT 1 FROM finerenone_hf_patients) THEN ROUND((SELECT COUNT(DISTINCT patient_id) FROM finerenone_hf_patients) * 100.0 / (SELECT total_count FROM total_hf_patients), 4) WHEN EXISTS (SELECT 1 FROM class_hf_patients) THEN ROUND((SELECT COUNT(DISTINCT patient_id) FROM class_hf_patients) * 100.0 / (SELECT total_count FROM total_hf_patients), 4) ELSE NULL END AS percentage;",
+        "gold_answer": [
+            [
+                2.2901
+            ]
+        ]
+    },
+    {
+        "task_id": "10",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions for Peptic Ulcer Disease (PUD). Specifically, you want to check if a medication recorded exactly as 'ranitidine' was prescribed to PUD patients following their first PUD diagnosis during the same ICU admission. If found, you want to know the list of exact drug names recorded. If no patients were prescribed a medication under the exact name 'ranitidine,' you want to repeat the same question using medications in the same drug class as ranitidine (i.e., other H2 receptor antagonists). If no H2 receptor antagonists are found either, end the conversation.",
+        "gold_sql": "WITH FirstCondition AS ( SELECT ip.patient_id, ip.unit_id AS first_pud_unit_id, MIN(c.condition_time) AS first_condition_time FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE c.condition_name IN ( 'peptic ulcer disease', 'peptic ulcer disease - duodenal' ) GROUP BY ip.patient_id, ip.unit_id ), FirstPUDAdmission AS ( SELECT * FROM FirstCondition WHERE (patient_id, first_condition_time) IN ( SELECT patient_id, MIN(first_condition_time) FROM FirstCondition GROUP BY patient_id ) ), ranitidine_drugs AS ( SELECT DISTINCT pr.drug_name FROM prescription pr JOIN FirstPUDAdmission fpa ON pr.unit_id = fpa.first_pud_unit_id WHERE pr.drug_name = 'ranitidine' AND pr.medication_start_time > fpa.first_condition_time ), other_h2_blocker_drugs AS ( SELECT DISTINCT pr.drug_name FROM prescription pr JOIN FirstPUDAdmission fpa ON pr.unit_id = fpa.first_pud_unit_id WHERE (pr.drug_name LIKE '%famotidine%' OR pr.drug_name LIKE '%cimetidine%' OR pr.drug_name LIKE '%nizatidine%' OR pr.drug_name LIKE '%pepcid%') AND pr.drug_name != 'ranitidine' AND pr.medication_start_time > fpa.first_condition_time ) SELECT CASE WHEN EXISTS (SELECT 1 FROM ranitidine_drugs) THEN (SELECT GROUP_CONCAT(drug_name, ', ') FROM (SELECT drug_name FROM ranitidine_drugs ORDER BY drug_name)) WHEN EXISTS (SELECT 1 FROM other_h2_blocker_drugs) THEN (SELECT GROUP_CONCAT(drug_name, ', ') FROM (SELECT drug_name FROM other_h2_blocker_drugs ORDER BY drug_name)) ELSE NULL END AS drug_names;",
+        "gold_answer": [
+            [
+                "famotidine, pepcid"
+            ]
+        ]
+    },
+    {
+        "task_id": "11",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to find the percentage of patients who were prescribed a medication recorded exactly as 'apixaban' on 2100-12-31 out of all patients with any prescription on that date. You want the result in percentage (%) rounded to four decimal places. If no patients were prescribed a medication under the exact name 'apixaban,' you want to repeat the same question using medications in the same drug class as apixaban. If no anticoagulants are found either, end the conversation.",
+        "gold_sql": "WITH apixaban_patients AS ( SELECT DISTINCT ip.patient_id FROM icupatient ip JOIN prescription p ON ip.unit_id = p.unit_id WHERE DATE(p.medication_start_time) = '2100-12-31' AND p.drug_name = 'apixaban' ), other_anticoagulant_patients AS ( SELECT DISTINCT ip.patient_id FROM icupatient ip JOIN prescription p ON ip.unit_id = p.unit_id WHERE DATE(p.medication_start_time) = '2100-12-31' AND (p.drug_name LIKE '%warfarin%' OR p.drug_name LIKE '%coumadin%' OR p.drug_name LIKE '%rivaroxaban%' OR p.drug_name LIKE '%dabigatran%' OR p.drug_name LIKE '%edoxaban%' OR p.drug_name LIKE '%heparin%' OR p.drug_name LIKE '%enoxaparin%' OR p.drug_name LIKE '%fondaparinux%') ), total_patients AS ( SELECT COUNT(DISTINCT ip.patient_id) AS total_count FROM icupatient ip JOIN prescription p ON ip.unit_id = p.unit_id WHERE DATE(p.medication_start_time) = '2100-12-31' ) SELECT CASE WHEN EXISTS (SELECT 1 FROM apixaban_patients) THEN ROUND((SELECT COUNT(*) FROM apixaban_patients) * 100.0 / (SELECT total_count FROM total_patients), 4) WHEN EXISTS (SELECT 1 FROM other_anticoagulant_patients) THEN ROUND((SELECT COUNT(*) FROM other_anticoagulant_patients) * 100.0 / (SELECT total_count FROM total_patients), 4) ELSE NULL END AS percentage;",
+        "gold_answer": [
+            [
+                18.1818
+            ]
+        ]
+    },
+    {
+        "task_id": "12",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to identify the three most common diagnosis names received by patients who were prescribed both an ACE inhibitor and a beta-blocker at least once each during the same ICU admission. You want to first check if a medication recorded exactly as 'enalapril' exists in the database as the ACE inhibitor. If no prescription under the exact name 'enalapril' is found, you want to repeat the same question using medications in the same drug class as enalapril. If a patient received simultaneous prescriptions for these medications across multiple ICU admissions, you want to count only the first ICU admission record. If a patient received multiple diagnoses during the same ICU admission, you want to count each diagnosis only once. If multiple diagnosis names occur with the same frequency, you want to know all of them. You want the answer in the exact diagnosis names recorded in the database. If no ACE inhibitors are found either, end the conversation.",
+        "gold_sql": "WITH enalapril_drugs AS ( SELECT DISTINCT drug_name FROM prescription WHERE drug_name = 'enalapril' ), other_ace_inhibitor_drugs AS ( SELECT DISTINCT drug_name FROM prescription WHERE (drug_name LIKE '%captopril%' OR drug_name LIKE '%lisinopril%' OR drug_name LIKE '%ramipril%' OR drug_name LIKE '%benazepril%' OR drug_name LIKE '%fosinopril%' OR drug_name LIKE '%quinapril%' OR drug_name LIKE '%perindopril%' OR drug_name LIKE '%trandolapril%') ), selected_ace AS ( SELECT drug_name FROM enalapril_drugs WHERE EXISTS (SELECT 1 FROM enalapril_drugs) UNION ALL SELECT drug_name FROM other_ace_inhibitor_drugs WHERE NOT EXISTS (SELECT 1 FROM enalapril_drugs) ), beta_blockers AS ( SELECT DISTINCT drug_name FROM prescription WHERE drug_name LIKE '%metoprolol%' OR drug_name LIKE '%atenolol%' OR drug_name LIKE '%propranolol%' OR drug_name LIKE '%carvedilol%' OR drug_name LIKE '%bisoprolol%' OR drug_name LIKE '%nadolol%' OR drug_name LIKE '%timolol%' OR drug_name LIKE '%labetalol%' ), patients_with_both AS ( SELECT ip.patient_id, ip.unit_id, ROW_NUMBER() OVER (PARTITION BY ip.patient_id ORDER BY ip.unit_admit_time) AS rn FROM icupatient ip WHERE EXISTS ( SELECT 1 FROM prescription pr WHERE pr.unit_id = ip.unit_id AND pr.drug_name IN (SELECT drug_name FROM selected_ace) ) AND EXISTS ( SELECT 1 FROM prescription pr WHERE pr.unit_id = ip.unit_id AND pr.drug_name IN (SELECT drug_name FROM beta_blockers) ) ), first_icu_stay AS ( SELECT unit_id FROM patients_with_both WHERE rn = 1 ), diagnoses AS ( SELECT DISTINCT f.unit_id, c.condition_name FROM first_icu_stay f JOIN condition c ON f.unit_id = c.unit_id ), diagnosis_counts AS ( SELECT condition_name, COUNT(*) AS diag_count, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) AS rnk FROM diagnoses GROUP BY condition_name ) SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM selected_ace) THEN NULL WHEN NOT EXISTS (SELECT 1 FROM first_icu_stay) THEN NULL ELSE (SELECT GROUP_CONCAT(condition_name, ', ') FROM (SELECT condition_name FROM diagnosis_counts WHERE rnk <= 3 ORDER BY rnk, condition_name)) END AS top_diagnoses;",
+        "gold_answer": [
+            [
+                "acute respiratory failure, hypertension, acute coronary syndrome - acute myocardial infarction (no st elevation), congestive heart failure"
+            ]
+        ]
+    },
+    {
+        "task_id": "13",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "You are assisting with a clinical study evaluating the adoption of direct oral anticoagulants (DOACs) in ICU patients newly diagnosed with atrial fibrillation. First, identify patients diagnosed with atrial fibrillation this month. Among these patients, check if any have been prescribed a DOAC after their atrial fibrillation diagnosis. If so, list the exact medication names as recorded in the database. If no patient was prescribed a DOAC, broaden the search to include any other anticoagulant therapy prescribed after their diagnosis, and list the exact medication names. If neither category yields results, report that no matching prescriptions were found.",
+        "gold_sql": "WITH AFPatientsThisMonth AS ( SELECT ip.patient_id, ip.unit_id, MIN(c.condition_time) AS first_af_time FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%atrial fibrillation%' AND datetime(c.condition_time, 'start of month') = datetime('2100-12-31 23:59:00', 'start of month') AND NOT EXISTS ( SELECT 1 FROM condition c2 JOIN icupatient ip2 ON c2.unit_id = ip2.unit_id WHERE ip2.patient_id = ip.patient_id AND c2.condition_name LIKE '%atrial fibrillation%' AND c2.condition_time < c.condition_time ) GROUP BY ip.patient_id, ip.unit_id ), DOACPrescriptions AS ( SELECT DISTINCT pr.drug_name FROM AFPatientsThisMonth a JOIN prescription pr ON a.unit_id = pr.unit_id WHERE (pr.drug_name LIKE '%apixaban%' OR pr.drug_name LIKE '%rivaroxaban%' OR pr.drug_name LIKE '%dabigatran%' OR pr.drug_name LIKE '%edoxaban%') AND pr.medication_start_time > a.first_af_time ), OtherAnticoagulants AS ( SELECT DISTINCT pr.drug_name FROM AFPatientsThisMonth a JOIN prescription pr ON a.unit_id = pr.unit_id WHERE ( pr.drug_name LIKE '%warfarin%' OR pr.drug_name LIKE '%coumadin%' OR pr.drug_name LIKE '%heparin%' OR pr.drug_name LIKE '%enoxaparin%' OR pr.drug_name LIKE '%fondaparinux%') AND pr.medication_start_time > a.first_af_time ), combined AS ( SELECT drug_name FROM DOACPrescriptions WHERE EXISTS (SELECT 1 FROM DOACPrescriptions) UNION ALL SELECT drug_name FROM OtherAnticoagulants WHERE NOT EXISTS (SELECT 1 FROM DOACPrescriptions) ) SELECT drug_name FROM combined ORDER BY drug_name;",
+        "gold_answer": [
+            [
+                "0.4 ml syringe : enoxaparin sodium 40 mg/0.4ml sc soln"
+            ],
+            [
+                "enoxaparin"
+            ]
+        ]
+    },
+    {
+        "task_id": "14",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore patient data related to medication prescriptions. Specifically, you are interested in patient ID 016-10811 and want to know when they were prescribed a medication recorded exactly as 'clarithromycin' after their first pneumonia diagnosis during the ICU admission in which the first pneumonia diagnosis was recorded. If found, you want to know the most recent prescription time. If the patient was not prescribed a medication under the exact name 'clarithromycin,' you want to repeat the same question using medications in the same drug class as clarithromycin. If no such medications are found either, end the conversation. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "WITH first_pneumonia_admission AS ( SELECT ip.patient_id, ip.unit_id, MIN(c.condition_time) AS first_pneumonia_time FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE ip.patient_id = '016-10811' AND c.condition_name LIKE '%pneumonia%' GROUP BY ip.patient_id, ip.unit_id ORDER BY first_pneumonia_time LIMIT 1 ), clarithromycin_time AS ( SELECT MAX(pr.medication_start_time) AS most_recent FROM first_pneumonia_admission fpa JOIN prescription pr ON fpa.unit_id = pr.unit_id WHERE pr.drug_name = 'clarithromycin' AND pr.medication_start_time > fpa.first_pneumonia_time ), other_macrolide_time AS ( SELECT MAX(pr.medication_start_time) AS most_recent FROM first_pneumonia_admission fpa JOIN prescription pr ON fpa.unit_id = pr.unit_id WHERE (pr.drug_name LIKE '%azithromycin%' OR pr.drug_name LIKE '%erythromycin%') AND pr.medication_start_time > fpa.first_pneumonia_time ) SELECT CASE WHEN (SELECT most_recent FROM clarithromycin_time) IS NOT NULL THEN (SELECT most_recent FROM clarithromycin_time) WHEN (SELECT most_recent FROM other_macrolide_time) IS NOT NULL THEN (SELECT most_recent FROM other_macrolide_time) ELSE NULL END AS most_recent_prescription_time;",
+        "gold_answer": [
+            [
+                "2100-06-15 08:30:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "15",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore patient data related to diagnoses. Specifically, you are interested in patient ID 002-1015 and want to know when they were first diagnosed with Cirrhosis itself, not a complication. If the exact diagnosis code for Cirrhosis is found, retrieve the first diagnosis date. If it is not found, repeat the same question but with any complications related to cirrhosis. If neither is found, end the conversation. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "WITH cirrhosis_exact AS ( SELECT MIN(c.condition_time) AS first_diag_time FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE ip.patient_id = '002-1015' AND c.condition_name = 'cirrhosis' ), cirrhosis_complications AS ( SELECT MIN(c.condition_time) AS first_diag_time FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE ip.patient_id = '002-1015' AND c.condition_name LIKE '%cirrhosis%' AND c.condition_name != 'cirrhosis' ) SELECT CASE WHEN (SELECT first_diag_time FROM cirrhosis_exact) IS NOT NULL THEN (SELECT first_diag_time FROM cirrhosis_exact) WHEN (SELECT first_diag_time FROM cirrhosis_complications) IS NOT NULL THEN (SELECT first_diag_time FROM cirrhosis_complications) ELSE NULL END AS diagnosis_time;",
+        "gold_answer": [
+            [
+                "2100-02-22 04:40:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "16",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to post-surgical complications. Specifically, you want to identify patients who underwent CABG and check if any of those patients had a condition recorded exactly as 'bone fracture(s) - sternum' during the same ICU admission at the time of or after the procedure. If no such condition is found among CABG patients, you want to repeat the same question using any other sternum-related complications. If neither is found, end the conversation.",
+        "gold_sql": "WITH CABGPatients AS ( SELECT DISTINCT ip.patient_id, ip.unit_id, t.treatment_time FROM treatment t JOIN icupatient ip ON t.unit_id = ip.unit_id WHERE t.treatment_name LIKE '%cabg%' ), sternal_fracture_patients AS ( SELECT DISTINCT cp.patient_id FROM CABGPatients cp JOIN condition c ON cp.unit_id = c.unit_id WHERE c.condition_name = 'bone fracture(s) - sternum' AND c.condition_time >= cp.treatment_time ), other_sternal_patients AS ( SELECT DISTINCT cp.patient_id FROM CABGPatients cp JOIN condition c ON cp.unit_id = c.unit_id WHERE (c.condition_name LIKE '%sternal%' OR c.condition_name LIKE '%sternum%') AND c.condition_name != 'bone fracture(s) - sternum' AND c.condition_time >= cp.treatment_time ), combined AS ( SELECT patient_id FROM sternal_fracture_patients WHERE EXISTS (SELECT 1 FROM sternal_fracture_patients) UNION ALL SELECT patient_id FROM other_sternal_patients WHERE NOT EXISTS (SELECT 1 FROM sternal_fracture_patients) ) SELECT patient_id FROM combined ORDER BY patient_id;",
+        "gold_answer": [
+            [
+                "021-101516"
+            ]
+        ]
+    },
+    {
+        "task_id": "17",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore patient data related to diagnoses. Specifically, you are interested in patient ID 030-12027 and want to check if they were diagnosed with congestive heart failure and prescribed a medication recorded exactly as 'lasix' during the same ICU admission. If found, you want to identify the diagnosis most likely associated with a side effect of lasix following its prescription, based on the most frequently recorded side effect condition after the prescription. If no medication under the exact name 'lasix' is found, you want to repeat the same question using medications with the same active ingredient as lasix. You want to know side effects suspected to be caused by the diuretic use, not those resulting solely from congestive heart failure. You want the answer to be based on the exact diagnosis name recorded in the database. If the patient does not meet both conditions (CHF diagnosis and the medication), or if neither medication is found, end the conversation.",
+        "gold_sql": "WITH CHFDiagnosis AS ( SELECT ip.patient_id, ip.unit_id, c.condition_time FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE ip.patient_id = '030-12027' AND c.condition_name LIKE '%congestive heart failure%' ), lasix_prescription AS ( SELECT pr.unit_id, pr.medication_start_time FROM prescription pr JOIN icupatient ip ON pr.unit_id = ip.unit_id WHERE ip.patient_id = '030-12027' AND pr.drug_name = 'lasix' ), furosemide_prescription AS ( SELECT pr.unit_id, pr.medication_start_time FROM prescription pr JOIN icupatient ip ON pr.unit_id = ip.unit_id WHERE ip.patient_id = '030-12027' AND pr.drug_name LIKE '%furosemide%' ), selected_prescription AS ( SELECT unit_id, medication_start_time FROM lasix_prescription WHERE EXISTS (SELECT 1 FROM lasix_prescription) UNION ALL SELECT unit_id, medication_start_time FROM furosemide_prescription WHERE NOT EXISTS (SELECT 1 FROM lasix_prescription) ), PatientWithBoth AS ( SELECT c.unit_id, sp.medication_start_time FROM CHFDiagnosis c JOIN selected_prescription sp ON c.unit_id = sp.unit_id ), SuspectedSideEffects AS ( SELECT DISTINCT c.condition_id, c.condition_name FROM PatientWithBoth p JOIN condition c ON p.unit_id = c.unit_id WHERE (c.condition_name LIKE '%hypokalemia%' OR c.condition_name LIKE '%hyponatremia%' OR c.condition_name LIKE '%dehydration%' OR c.condition_name LIKE '%hypotension%') AND c.condition_time > p.medication_start_time ), SideEffectCounts AS ( SELECT condition_name, COUNT(*) AS diag_count, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC, condition_name ASC) AS rank FROM SuspectedSideEffects GROUP BY condition_name ) SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM lasix_prescription) AND NOT EXISTS (SELECT 1 FROM furosemide_prescription) THEN NULL WHEN NOT EXISTS (SELECT 1 FROM PatientWithBoth) THEN NULL ELSE (SELECT condition_name FROM SideEffectCounts WHERE rank = 1) END AS condition_name;",
+        "gold_answer": [
+            [
+                "hypokalemia"
+            ]
+        ]
+    },
+    {
+        "task_id": "18",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore diagnosis-related statistics. Specifically, you want to identify patients diagnosed with rheumatoid arthritis who also have cardiovascular or renal comorbidities during the same ICU admission. You want to first check if any of those patients have a condition recorded exactly as 'pericarditis', which is a hallmark cardiovascular manifestation of rheumatoid arthritis. If no such condition is found among rheumatoid arthritis patients, you want to repeat the same question using other cardiovascular or renal comorbidities commonly associated with rheumatoid arthritis. If no comorbidities are found, end the conversation.",
+        "gold_sql": "WITH RAPatients AS ( SELECT DISTINCT i.patient_id, i.unit_id FROM condition c JOIN icupatient i ON c.unit_id = i.unit_id WHERE c.condition_name LIKE '%rheumatoid arthritis%' ), pericarditis_patients AS ( SELECT DISTINCT r.patient_id FROM RAPatients r JOIN condition c ON r.unit_id = c.unit_id WHERE c.condition_name = 'pericarditis' ), other_cv_patients AS ( SELECT DISTINCT r.patient_id FROM RAPatients r JOIN condition c ON r.unit_id = c.unit_id WHERE (c.condition_name LIKE '%myocardial infarction%' OR c.condition_name LIKE '%heart failure%' OR c.condition_name LIKE '%coronary artery disease%' OR c.condition_name LIKE '%peripheral artery disease%' OR c.condition_name LIKE '%atrial fibrillation%' OR c.condition_name LIKE '%stroke%' OR c.condition_name LIKE '%cerebrovascular accident%' OR c.condition_name LIKE '%chronic renal insufficiency%') ), combined AS ( SELECT patient_id FROM pericarditis_patients WHERE EXISTS (SELECT 1 FROM pericarditis_patients) UNION ALL SELECT patient_id FROM other_cv_patients WHERE NOT EXISTS (SELECT 1 FROM pericarditis_patients) ) SELECT patient_id FROM combined ORDER BY patient_id;",
+        "gold_answer": [
+            [
+                "003-10606"
+            ]
+        ]
+    },
+    {
+        "task_id": "19",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore patient data related to diagnoses. Specifically, you are interested in patient ID 004-21129 and want to calculate the length of the hospital stay (in days) for the first admission associated with their Deep Vein Thrombosis (DVT) diagnosis. If a condition recorded exactly as 'dvt' is found, calculate the duration. If it is not found, repeat the same calculation for any complications arising from the migration of the thrombus. If neither is found, end the conversation. You want the result rounded to four decimal places.",
+        "gold_sql": "WITH dvt_exact AS ( SELECT ip.hospital_admit_time, ip.hospital_discharge_time FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE ip.patient_id = '004-21129' AND c.condition_name = 'dvt' ORDER BY ip.hospital_admit_time LIMIT 1 ), dvt_complications AS ( SELECT ip.hospital_admit_time, ip.hospital_discharge_time FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE ip.patient_id = '004-21129' AND c.condition_name LIKE '%pulmonary embolism%' ORDER BY ip.hospital_admit_time LIMIT 1 ) SELECT CASE WHEN (SELECT hospital_admit_time FROM dvt_exact) IS NOT NULL THEN (SELECT ROUND(JULIANDAY(hospital_discharge_time) - JULIANDAY(hospital_admit_time), 4) FROM dvt_exact) WHEN (SELECT hospital_admit_time FROM dvt_complications) IS NOT NULL THEN (SELECT ROUND(JULIANDAY(hospital_discharge_time) - JULIANDAY(hospital_admit_time), 4) FROM dvt_complications) ELSE NULL END AS hospital_los_days;",
+        "gold_answer": [
+            [
+                1.925
+            ]
+        ]
+    },
+    {
+        "task_id": "20",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the most recent hemoglobin level for patient ID 004-12627 to assess their anemia status. If hemoglobin levels are available, you want to retrieve the most recent hemoglobin record. If hemoglobin levels are not available, you want to identify other lab records used for anemia status evaluation. If those other lab records include hematocrit, you want only the most recent hematocrit level. If those records do not include hematocrit, end the conversation. You do not know which anemia status-related lab tests are stored in the database, so do not suggest hematocrit unless the DB agent mentions it first.",
+        "gold_sql": "WITH HbCheck AS ( SELECT l.lab_result, l.lab_result_time FROM icupatient ip JOIN lab l ON ip.unit_id = l.unit_id WHERE ip.patient_id = '004-12627' AND l.lab_name = 'hemoglobin' ORDER BY l.lab_result_time DESC LIMIT 1 ), HctCheck AS ( SELECT l.lab_result, l.lab_result_time FROM icupatient ip JOIN lab l ON ip.unit_id = l.unit_id WHERE ip.patient_id = '004-12627' AND l.lab_name = 'hct' ORDER BY l.lab_result_time DESC LIMIT 1 ) SELECT CASE WHEN EXISTS (SELECT 1 FROM HbCheck) THEN (SELECT lab_result FROM HbCheck) ELSE (SELECT lab_result FROM HctCheck) END AS lab_result;",
+        "gold_answer": [
+            [
+                36.9
+            ]
+        ]
+    },
+    {
+        "task_id": "21",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the number of patients with blood \u03b2-hydroxybutyrate levels >3.0 mmol/L for DKA-related research. If there are patients with \u03b2-hydroxybutyrate levels >3.0 mmol/L, you want to know the number of such patients. If no such patients are found, you want to identify other lab records used for metabolic status monitoring. If those other lab records include bicarbonate or hco3, you want to know the number of patients with bicarbonate or hco3 levels <18 mmol/L. If bicarbonate or hco3 records are not included, end the conversation. You do not know which metabolic status-related lab tests are stored in the database, so do not suggest bicarbonate or hco3 unless the DB agent mentions it first. You want the number of patients reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three).",
+        "gold_sql": "WITH BetaHydroxyPatients AS ( SELECT COUNT(DISTINCT ip.patient_id) AS patient_count FROM icupatient ip JOIN lab l ON ip.unit_id = l.unit_id WHERE l.lab_name LIKE '%beta-hydroxybutyrate%' AND l.lab_result > 3.0 ), BicarbonatePatients AS ( SELECT COUNT(DISTINCT ip.patient_id) AS patient_count FROM icupatient ip JOIN lab l ON ip.unit_id = l.unit_id WHERE (l.lab_name = 'bicarbonate' OR l.lab_name = 'hco3') AND l.lab_result < 18 ) SELECT CASE WHEN (SELECT patient_count FROM BetaHydroxyPatients) > 0 THEN (SELECT patient_count FROM BetaHydroxyPatients) ELSE (SELECT patient_count FROM BicarbonatePatients) END AS patient_count;",
+        "gold_answer": [
+            [
+                "two hundred and forty-seven"
+            ]
+        ]
+    },
+    {
+        "task_id": "22",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the creatinine levels for patient ID 033-10301 taken 24 hours after their last furosemide prescription to assess their kidney function status. If the patient\u2019s ICU admission records after the furosemide prescription contain creatinine levels, you want to know all creatinine levels taken after 24 hours. If the patient\u2019s ICU admission records after the furosemide prescription do not contain creatinine levels, you want to identify other lab records used to assess kidney function status after 24 hours. If those other lab records include BUN levels, you want to know all BUN levels taken after 24 hours. If those records do not include BUN, end the conversation. You do not know which kidney function-related lab tests are stored in the database, so do not suggest BUN unless the DB agent mentions it first.",
+        "gold_sql": "WITH LastFurosemide AS ( SELECT pr.unit_id, MAX(pr.medication_start_time) AS last_furosemide_time FROM prescription pr JOIN icupatient ip ON pr.unit_id = ip.unit_id WHERE ip.patient_id = '033-10301' AND pr.drug_name LIKE '%furosemide%' ), CreatinineLevels AS ( SELECT l.lab_result AS creatinine_value, l.lab_result_time FROM lab l JOIN LastFurosemide lf ON l.unit_id = lf.unit_id WHERE l.lab_name = 'creatinine' AND datetime(l.lab_result_time) > datetime(lf.last_furosemide_time, '+24 hours') ), BUNLevels AS ( SELECT l.lab_result AS bun_value, l.lab_result_time FROM lab l JOIN LastFurosemide lf ON l.unit_id = lf.unit_id WHERE l.lab_name = 'bun' AND datetime(l.lab_result_time) > datetime(lf.last_furosemide_time, '+24 hours') ), CombinedResults AS ( SELECT creatinine_value AS result_value, lab_result_time FROM CreatinineLevels WHERE EXISTS (SELECT 1 FROM CreatinineLevels) UNION ALL SELECT bun_value AS result_value, lab_result_time FROM BUNLevels WHERE NOT EXISTS (SELECT 1 FROM CreatinineLevels) ) SELECT result_value FROM CombinedResults ORDER BY lab_result_time;",
+        "gold_answer": [
+            [
+                19.0
+            ],
+            [
+                22.0
+            ],
+            [
+                23.0
+            ],
+            [
+                24.0
+            ],
+            [
+                21.0
+            ]
+        ]
+    },
+    {
+        "task_id": "23",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the latest lipase level for patient ID 028-10243 to know their pancreatic status in relation to their upper stomach pain diagnosis during their last hospital visit. If the ICU records for this patient\u2019s first upper stomach pain diagnosis contain a lipase level, you want to know the latest lipase level. If the ICU records for this patient\u2019s first upper stomach pain diagnosis do not contain a lipase level, you want to identify other lab records used to assess pancreatic status. If those other lab records include amylase, you want only the latest amylase level. If those records do not include amylase, end the conversation. You do not know which pancreatic status-related lab tests are stored in the database, so do not suggest amylase unless the DB agent mentions it first.",
+        "gold_sql": "WITH LastHospitalVisit AS ( SELECT hosp_id FROM icupatient WHERE patient_id = '028-10243' ORDER BY hospital_admit_time DESC LIMIT 1 ), LastPatientStay AS ( SELECT unit_id FROM icupatient WHERE patient_id = '028-10243' AND hosp_id = (SELECT hosp_id FROM LastHospitalVisit) ), FirstAbdominalCondition AS ( SELECT c.unit_id, c.condition_time AS diag_time FROM condition c JOIN LastPatientStay lps ON c.unit_id = lps.unit_id WHERE c.condition_name = 'abdominal pain / tenderness - epigastric' ORDER BY c.condition_time ASC LIMIT 1 ), LastLipase AS ( SELECT l.lab_result, l.lab_result_time FROM lab l JOIN FirstAbdominalCondition ad ON l.unit_id = ad.unit_id WHERE l.lab_name = 'lipase' ORDER BY l.lab_result_time DESC LIMIT 1 ), LastAmylase AS ( SELECT l.lab_result, l.lab_result_time FROM lab l JOIN FirstAbdominalCondition ad ON l.unit_id = ad.unit_id WHERE l.lab_name = 'amylase' ORDER BY l.lab_result_time DESC LIMIT 1 ) SELECT CASE WHEN EXISTS (SELECT 1 FROM LastLipase) THEN (SELECT lab_result FROM LastLipase) ELSE (SELECT lab_result FROM LastAmylase) END AS lab_result;",
+        "gold_answer": [
+            [
+                42.0
+            ]
+        ]
+    },
+    {
+        "task_id": "24",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the latest PaO2 level for patient ID 004-10991 from their arterial blood gas analysis to assess for hypoxemia. If PaO2 levels are available, you want to retrieve the latest record. If PaO2 levels are not available, you want to identify other lab records used for oxygenation monitoring. If those other lab records include SpO2, you want only the latest SpO2 level. If those records do not include SpO2, end the conversation. You do not know which oxygenation-related lab tests are stored in the database, so do not suggest SpO2 unless the DB agent mentions it first.",
+        "gold_sql": "WITH patient_units AS ( SELECT DISTINCT unit_id FROM icupatient WHERE patient_id = '004-10991' ), pao2_all AS ( SELECT l.lab_result, l.lab_result_time FROM lab l JOIN patient_units pu ON l.unit_id = pu.unit_id WHERE l.lab_name LIKE '%pao2%' ), latest_pao2 AS ( SELECT lab_result, lab_result_time FROM pao2_all ORDER BY lab_result_time DESC LIMIT 1 ), spo2_all AS ( SELECT v.sao2 AS oxygen_value, v.vital_time AS oxygen_time FROM vital_signs v JOIN patient_units pu ON v.unit_id = pu.unit_id WHERE v.sao2 IS NOT NULL ), latest_spo2 AS ( SELECT oxygen_value, oxygen_time FROM spo2_all ORDER BY oxygen_time DESC LIMIT 1 ), final_result AS ( SELECT 'pao2' AS measure_type, ROUND(lab_result, 4) AS oxygenation_level, lab_result_time AS measure_time FROM latest_pao2 WHERE EXISTS (SELECT 1 FROM pao2_all) UNION ALL SELECT 'spo2' AS measure_type, ROUND(oxygen_value, 4) AS oxygenation_level, oxygen_time AS measure_time FROM latest_spo2 WHERE NOT EXISTS (SELECT 1 FROM pao2_all) ) SELECT oxygenation_level FROM final_result LIMIT 1;",
+        "gold_answer": [
+            [
+                100.0
+            ]
+        ]
+    },
+    {
+        "task_id": "25",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to patient procedures. Specifically, you want to identify patients diagnosed with aortic aneurysm. If no patients have been diagnosed with aortic aneurysm, end the conversation. If such patients exist, you ultimately want to know the number of patients diagnosed with aortic aneurysm who underwent specific procedures. If there are patients diagnosed with aortic aneurysm who received EVAR during the same ICU admission, you want to know the number of such patients. If no patients diagnosed with aortic aneurysm received EVAR during the same ICU admission, you want to know what other types of procedures or surgeries were performed as a direct treatment for their aortic aneurysm. You want the answers to be based on the exact procedure or surgery names recorded in the database, excluding general consultations and focusing on actual performed procedures or surgeries.",
+        "gold_sql": "WITH AorticAneurysmPatients AS ( SELECT DISTINCT ip.patient_id, ip.hosp_id, ip.unit_id FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%aortic aneurysm%' ), EVARPatientCounts AS ( SELECT COUNT(DISTINCT a.patient_id) AS patient_count FROM AorticAneurysmPatients a JOIN treatment t ON a.unit_id = t.unit_id WHERE t.treatment_name LIKE '%endovascular aneurysm repair%' OR t.treatment_name LIKE '%evar%' ), OtherProcedures AS ( SELECT DISTINCT t.treatment_name FROM AorticAneurysmPatients a JOIN treatment t ON a.unit_id = t.unit_id WHERE t.treatment_name NOT LIKE '%consultation%' AND (t.treatment_name LIKE '%aneurysm%' OR t.treatment_name LIKE '%resection%') ) SELECT patient_count FROM EVARPatientCounts WHERE EXISTS (SELECT 1 FROM EVARPatientCounts WHERE patient_count > 0) UNION ALL SELECT treatment_name FROM OtherProcedures o WHERE NOT EXISTS (SELECT 1 FROM EVARPatientCounts WHERE patient_count > 0);",
+        "gold_answer": [
+            [
+                "aneurysm resection / repair"
+            ]
+        ]
+    },
+    {
+        "task_id": "26",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to patient procedures. Specifically, you want to identify patients diagnosed with ischemic stroke. If no patients were diagnosed with ischemic stroke, end the conversation. If such patients exist, ultimately, you want to know the list of patients who had ischemic stroke and received a specific endovascular thrombectomy. If there are patients who had ischemic stroke and received endovascular thrombectomy during the same ICU admission, you want to know their patient IDs. If no patients with ischemic stroke received endovascular thrombectomy during the same ICU admission, you want to know the most frequently performed surgical procedure as a direct treatment for ischemic stroke. You want the answers to be based on the exact surgery names recorded in the database.",
+        "gold_sql": "WITH IschemicStrokePatients AS ( SELECT DISTINCT ip.patient_id, ip.unit_id FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%ischemic stroke%' ), ThrombectomyPatients AS ( SELECT DISTINCT isp.patient_id FROM IschemicStrokePatients isp JOIN treatment t ON isp.unit_id = t.unit_id WHERE t.treatment_name LIKE '%endovascular thrombectomy%' ), OtherProcedures AS ( SELECT t.treatment_name, COUNT(DISTINCT isp.patient_id) AS patient_count, DENSE_RANK() OVER (ORDER BY COUNT(DISTINCT isp.patient_id) DESC) AS rank FROM IschemicStrokePatients isp JOIN treatment t ON isp.unit_id = t.unit_id WHERE (t.treatment_name LIKE '%carotid endarterectomy%' OR t.treatment_name LIKE '%hemicraniectomy%' OR t.treatment_name LIKE '%vascular repair%') GROUP BY t.treatment_name ) SELECT patient_id FROM ThrombectomyPatients WHERE EXISTS (SELECT 1 FROM ThrombectomyPatients) UNION ALL SELECT treatment_name FROM OtherProcedures WHERE NOT EXISTS (SELECT 1 FROM ThrombectomyPatients);",
+        "gold_answer": [
+            [
+                "surgery - hemicraniectomy"
+            ]
+        ]
+    },
+    {
+        "task_id": "27",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore data related to patient procedures. Specifically, you are interested in patient ID 005-12359. If this patient received thoracentesis for pleural effusion treatment during the same ICU admission, you want to know when the procedure was performed. You want the answer in the exact time format recorded in the database. If this patient did not receive thoracentesis to treat pleural effusion during the same ICU admission, you want to know what other procedures or surgeries were performed as a direct treatment for it. You want the answer to be based on the exact procedure names recorded in the database.",
+        "gold_sql": "WITH PleuralEffusionStays AS ( SELECT ip.patient_id, ip.unit_id FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE ip.patient_id = '005-12359' AND c.condition_name LIKE '%pleural effusion%' ), ThoracentesisProcedures AS ( SELECT t.treatment_time FROM PleuralEffusionStays p JOIN treatment t ON p.unit_id = t.unit_id WHERE t.treatment_name LIKE '%thoracentesis%' OR t.treatment_name LIKE '%chest tap%' ), OtherProcedures AS ( SELECT DISTINCT t.treatment_name FROM PleuralEffusionStays p JOIN treatment t ON p.unit_id = t.unit_id WHERE (t.treatment_name LIKE '%chest tube%' OR t.treatment_name LIKE '%thoracostomy%' OR t.treatment_name LIKE '%pleurodesis%' OR t.treatment_name LIKE '%vats%' OR t.treatment_name LIKE '%thoracoscopy%' OR t.treatment_name LIKE '%drainage%' OR t.treatment_name LIKE '%decortication%') ) SELECT treatment_time FROM ThoracentesisProcedures WHERE EXISTS (SELECT 1 FROM ThoracentesisProcedures) UNION ALL SELECT treatment_name FROM OtherProcedures WHERE NOT EXISTS (SELECT 1 FROM ThoracentesisProcedures);",
+        "gold_answer": [
+            [
+                "insertion of thoracostomy tube - for drainage of effusion"
+            ]
+        ]
+    },
+    {
+        "task_id": "28",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore data related to patient procedures. Specifically, you are interested in patient ID 033-10044. If this patient received TIPS for variceal bleeding treatment during the same ICU admission, you want to know when the procedure was performed. You want the answer in the exact time format recorded in the database. If this patient did not receive TIPS for variceal bleeding treatment during the same ICU admission, you want to know other procedures or surgeries performed for the treatment. If the list of other procedures includes esophagogastroduodenoscopy - with banding, you ultimately want to know the complete list of patients who received it. If esophagogastroduodenoscopy - with banding is not in the records, end the conversation. You do not know which related procedures or surgeries are stored in the database, so you must not suggest esophagogastroduodenoscopy - with banding first and should only discuss it if the DB agent indicates it is relevant.",
+        "gold_sql": "WITH VaricealBleedingStays AS ( SELECT ip.patient_id, ip.unit_id FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE ip.patient_id = '033-10044' AND (c.condition_name LIKE '%variceal bleeding%' OR c.condition_name LIKE '%varices%bleeding%' OR c.condition_name LIKE '%bleeding%varices%') ), TIPSProcedures AS ( SELECT v.patient_id, t.treatment_time FROM VaricealBleedingStays v JOIN treatment t ON v.unit_id = t.unit_id WHERE t.treatment_name LIKE '%tips%' OR t.treatment_name LIKE '%transjugular intrahepatic portosystemic shunt%' ), OtherProcedures AS ( SELECT DISTINCT t.treatment_name FROM VaricealBleedingStays v JOIN treatment t ON v.unit_id = t.unit_id WHERE t.treatment_name NOT LIKE '%tips%' AND t.treatment_name NOT LIKE '%transjugular intrahepatic portosystemic shunt%' AND (t.treatment_name LIKE '%banding%' OR t.treatment_name LIKE '%sclerotherapy%' OR t.treatment_name LIKE '%endoscopic%varices%' OR t.treatment_name LIKE '%endoscopic%ligation%' OR t.treatment_name LIKE '%egd%' OR t.treatment_name LIKE '%esophagogastroduodenoscopy%') ), OtherPatientsWithAltProcedures AS ( SELECT DISTINCT ip.patient_id FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id JOIN treatment t ON ip.unit_id = t.unit_id WHERE t.treatment_name IN (SELECT treatment_name FROM OtherProcedures) AND t.treatment_name IN ('esophagogastroduodenoscopy - with banding') ) SELECT treatment_time AS value FROM TIPSProcedures WHERE EXISTS (SELECT 1 FROM TIPSProcedures) UNION ALL SELECT patient_id FROM OtherPatientsWithAltProcedures WHERE NOT EXISTS (SELECT 1 FROM TIPSProcedures);",
+        "gold_answer": [
+            [
+                "004-10239"
+            ],
+            [
+                "007-10069"
+            ],
+            [
+                "033-10044"
+            ]
+        ]
+    },
+    {
+        "task_id": "29",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to patient procedures. Specifically, you want to identify patients diagnosed with severe aortic stenosis. If no patients have been diagnosed with this condition, end the conversation. If such patients exist, you ultimately want to know the number of patients who underwent TAVR (Transcatheter Aortic Valve Replacement). If there are patients with severe aortic stenosis who received TAVR during the same hospital admission, you want to know the list of those patients. If no patients received TAVR during the same hospital admission, you want to know if an open-heart valve replacement surgery was performed instead. If SAVR (Surgical Aortic Valve Replacement) is included in the list found by the DB agent, you want to know the list of patients who received it.",
+        "gold_sql": "WITH SevereAorticStenosisPatients AS ( SELECT DISTINCT ip.patient_id, ip.hosp_id FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%valvular stenosis - aortic%' ), TAVRProcedures AS ( SELECT DISTINCT v.patient_id FROM SevereAorticStenosisPatients v JOIN icupatient ip ON v.hosp_id = ip.hosp_id JOIN treatment t ON ip.unit_id = t.unit_id WHERE t.treatment_name LIKE '%valve replacement or repair - routine%' ), SAVRProcedures AS ( SELECT DISTINCT v.patient_id FROM SevereAorticStenosisPatients v JOIN icupatient ip ON v.hosp_id = ip.hosp_id JOIN treatment t ON ip.unit_id = t.unit_id WHERE t.treatment_name LIKE '%valve replacement or repair%' AND t.treatment_name NOT LIKE '%routine%' ) SELECT DISTINCT patient_id FROM TAVRProcedures WHERE EXISTS (SELECT 1 FROM TAVRProcedures) UNION ALL SELECT DISTINCT patient_id FROM SAVRProcedures WHERE NOT EXISTS (SELECT 1 FROM TAVRProcedures) ORDER BY patient_id;",
+        "gold_answer": [
+            [
+                "027-100313"
+            ],
+            [
+                "027-100521"
+            ],
+            [
+                "027-101564"
+            ]
+        ]
+    },
+    {
+        "task_id": "30",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to determine the number of patients admitted to the hospital this month (including currently admitted patients) who met the specified conditions at least once during the same hospital admission. You want to include patients with suspected or proven severe infection, defined as the presence of three or more of the following conditions: - Condition 1: Body temperature > 38.3\u00b0C or < 36\u00b0C - Condition 2: Heart rate > 90 beats per minute - Condition 3: Tachypnea > 20/min or arterial PaCO2 < 32 mmHg - Condition 4: White blood cell count > 12,000, < 4,000, or > 10% immature (band) forms - Condition 5: Systolic blood pressure < 90 mmHg or mean arterial pressure < 65 mmHg - Condition 6: Diagnosis of change in mental status Among the patients meeting the above criteria, you want to include only those diagnosed with disseminated intravascular coagulation (DIC) during the same hospital admission. If no patients have been diagnosed with DIC, you want to repeat the same question for patients diagnosed with any other organ dysfunction commonly associated with sepsis. If still no patients are found, end the conversation. If certain conditions are missing from the database, you may ignore them during the conversation. Do not confuse the use of 'and' and 'or' when describing the conditions. All qualifying conditions must be satisfied within the same hospital admission, not limited to the same ICU admission. If the database contains multiple WBC items, you want to use 'wbc x 1000'. If the database lacks records for immature (band) forms, you want to use '-bands'. You do not know how lab results such as 'wbc x 1000', '-bands', or PaCO2 are stored in the database, so do not mention them unless the DB agent mentions them first. For change in mental status, even if multiple related diagnosis names exist, you want to request only the diagnosis name 'change in mental status'. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH HospitalStaysThisMonth AS ( SELECT DISTINCT i.patient_id, i.hosp_id FROM icupatient i WHERE datetime(i.hospital_admit_time, 'start of month') = datetime('2100-12-31 23:59:00', 'start of month') ), TemperatureCriterion AS ( SELECT DISTINCT h.patient_id, h.hosp_id FROM HospitalStaysThisMonth h JOIN icupatient i ON h.hosp_id = i.hosp_id JOIN vital_signs v ON i.unit_id = v.unit_id WHERE v.temperature > 38.3 OR v.temperature < 36 ), HeartRateCriterion AS ( SELECT DISTINCT h.patient_id, h.hosp_id FROM HospitalStaysThisMonth h JOIN icupatient i ON h.hosp_id = i.hosp_id JOIN vital_signs v ON i.unit_id = v.unit_id WHERE v.heart_rate > 90 ), RespiratoryCriterion AS ( SELECT DISTINCT h.patient_id, h.hosp_id FROM HospitalStaysThisMonth h JOIN icupatient i ON h.hosp_id = i.hosp_id JOIN vital_signs v ON i.unit_id = v.unit_id WHERE v.respiration_rate > 20 UNION SELECT DISTINCT h.patient_id, h.hosp_id FROM HospitalStaysThisMonth h JOIN icupatient i ON h.hosp_id = i.hosp_id JOIN lab l ON i.unit_id = l.unit_id WHERE l.lab_name = 'paco2' AND l.lab_result < 32 ), WBCCriterion AS ( SELECT DISTINCT h.patient_id, h.hosp_id FROM HospitalStaysThisMonth h JOIN icupatient i ON h.hosp_id = i.hosp_id JOIN lab l ON i.unit_id = l.unit_id WHERE l.lab_name = 'wbc x 1000' AND (l.lab_result > 12 OR l.lab_result < 4) UNION SELECT DISTINCT h.patient_id, h.hosp_id FROM HospitalStaysThisMonth h JOIN icupatient i ON h.hosp_id = i.hosp_id JOIN lab l ON i.unit_id = l.unit_id WHERE l.lab_name = '-bands' AND l.lab_result > 10 ), BloodPressureCriterion AS ( SELECT DISTINCT h.patient_id, h.hosp_id FROM HospitalStaysThisMonth h JOIN icupatient i ON h.hosp_id = i.hosp_id JOIN vital_signs v ON i.unit_id = v.unit_id WHERE v.systolic_bp < 90 OR v.mean_bp < 65 ), MentalStatusCriterion AS ( SELECT DISTINCT h.patient_id, h.hosp_id FROM HospitalStaysThisMonth h JOIN icupatient i ON h.hosp_id = i.hosp_id JOIN condition c ON i.unit_id = c.unit_id WHERE c.condition_name = 'change in mental status' ), ConditionCounts AS ( SELECT h.patient_id, h.hosp_id, (CASE WHEN EXISTS (SELECT 1 FROM TemperatureCriterion t WHERE t.hosp_id = h.hosp_id) THEN 1 ELSE 0 END + CASE WHEN EXISTS (SELECT 1 FROM HeartRateCriterion hr WHERE hr.hosp_id = h.hosp_id) THEN 1 ELSE 0 END + CASE WHEN EXISTS (SELECT 1 FROM RespiratoryCriterion r WHERE r.hosp_id = h.hosp_id) THEN 1 ELSE 0 END + CASE WHEN EXISTS (SELECT 1 FROM WBCCriterion w WHERE w.hosp_id = h.hosp_id) THEN 1 ELSE 0 END + CASE WHEN EXISTS (SELECT 1 FROM BloodPressureCriterion b WHERE b.hosp_id = h.hosp_id) THEN 1 ELSE 0 END + CASE WHEN EXISTS (SELECT 1 FROM MentalStatusCriterion m WHERE m.hosp_id = h.hosp_id) THEN 1 ELSE 0 END) AS condition_count FROM HospitalStaysThisMonth h ), EligiblePatients AS ( SELECT DISTINCT patient_id, hosp_id FROM ConditionCounts WHERE condition_count >= 3 ), EligibleWithDIC AS ( SELECT COUNT(DISTINCT ep.patient_id) AS patient_count FROM EligiblePatients ep JOIN icupatient i ON ep.hosp_id = i.hosp_id JOIN condition c ON i.unit_id = c.unit_id WHERE c.condition_name LIKE '%disseminated intravascular%' ), EligibleWithOtherOrganDysfunction AS ( SELECT COUNT(DISTINCT ep.patient_id) AS patient_count FROM EligiblePatients ep JOIN icupatient i ON ep.hosp_id = i.hosp_id JOIN condition c ON i.unit_id = c.unit_id WHERE (c.condition_name LIKE '%septic shock%' OR c.condition_name LIKE '%acute renal failure%' OR c.condition_name LIKE '%acute kidney%' OR c.condition_name LIKE '%acute respiratory distress%' OR c.condition_name LIKE '%acute respiratory failure%' OR c.condition_name LIKE '%hepatic dysfunction%' OR c.condition_name LIKE '%lactic acidosis%' OR c.condition_name LIKE '%coagulopathy%' OR c.condition_name LIKE '%organ failure%' OR c.condition_name LIKE '%organ dysfunction%') AND c.condition_name NOT LIKE '%disseminated intravascular%' ) SELECT CASE WHEN (SELECT patient_count FROM EligibleWithDIC) > 0 THEN (SELECT patient_count FROM EligibleWithDIC) WHEN (SELECT patient_count FROM EligibleWithOtherOrganDysfunction) > 0 THEN (SELECT patient_count FROM EligibleWithOtherOrganDysfunction) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "fourteen"
+            ]
+        ]
+    },
+    {
+        "task_id": "31",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to find the number of patients who may be eligible for a clinical study on secondary cardiovascular prevention with statin therapy. You want to include patients with records in the database who have at least two of the following cardiovascular risk factors during the same ICU admission: - Condition 1: Hypertension - Condition 2: Type 2 diabetes - Condition 3: Chronic kidney disease - Condition 4: Myocardial infarction or angina - Condition 5: Stroke Among the patients meeting the above criteria, you want to include only those who have been prescribed a medication recorded exactly as 'rosuvastatin' during the same ICU admission. If no patients were prescribed a medication under the exact name 'rosuvastatin,' you want to repeat the same question using medications in the same drug class as rosuvastatin. If still no patients are found, end the conversation. If certain conditions are missing from the database, you may ignore them during the conversation. Do not confuse the use of 'and' and 'or' when describing the conditions. You want different variations of the same diagnosis treated as a single diagnosis (e.g., controlled hypertension and uncontrolled hypertension should be treated as hypertension). You want to identify conditions only when they are the main diagnosis, and exclude diagnosis names that appear only as the cause of another diagnosis. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH PatientDiagnoses AS ( SELECT ip.patient_id, ip.unit_id, MAX( CASE WHEN cond.condition_name LIKE '%hypertension%' AND cond.condition_name NOT LIKE '% - due to %' THEN 1 ELSE 0 END ) AS has_hypertension, MAX( CASE WHEN ( cond.condition_name LIKE '%diabetes mellitus%type ii%' OR cond.condition_name LIKE '%diabetes mellitus%type 2%' ) AND cond.condition_name NOT LIKE '% - due to %' THEN 1 ELSE 0 END ) AS has_diabetes, MAX( CASE WHEN cond.condition_name LIKE '%chronic kidney disease%' AND cond.condition_name NOT LIKE '% - due to %' THEN 1 ELSE 0 END ) AS has_ckd, MAX( CASE WHEN ( cond.condition_name LIKE '%myocardial infarction%' OR cond.condition_name LIKE '%angina%' ) AND cond.condition_name NOT LIKE '% - due to %' THEN 1 ELSE 0 END ) AS has_heart_condition, MAX( CASE WHEN cond.condition_name LIKE '%stroke%' AND cond.condition_name NOT LIKE '% - due to %' THEN 1 ELSE 0 END ) AS has_stroke FROM condition cond JOIN icupatient ip ON cond.unit_id = ip.unit_id GROUP BY ip.patient_id, ip.unit_id ), EligiblePatients AS ( SELECT DISTINCT patient_id, unit_id FROM PatientDiagnoses WHERE (has_hypertension + has_diabetes + has_ckd + has_heart_condition + has_stroke) >= 2 ), RosuvastatinPatients AS ( SELECT COUNT(DISTINCT ep.patient_id) AS cnt FROM EligiblePatients ep JOIN prescription pr ON ep.unit_id = pr.unit_id WHERE pr.drug_name = 'rosuvastatin' ), OtherStatinPatients AS ( SELECT COUNT(DISTINCT ep.patient_id) AS cnt FROM EligiblePatients ep JOIN prescription pr ON ep.unit_id = pr.unit_id WHERE ( pr.drug_name LIKE '%atorvastatin%' OR pr.drug_name LIKE '%simvastatin%' OR pr.drug_name LIKE '%pravastatin%' OR pr.drug_name LIKE '%lovastatin%' OR pr.drug_name LIKE '%fluvastatin%' OR pr.drug_name LIKE '%pitavastatin%' ) AND pr.drug_name NOT LIKE '%rosuvastatin%' ) SELECT CASE WHEN (SELECT cnt FROM RosuvastatinPatients) > 0 THEN (SELECT cnt FROM RosuvastatinPatients) WHEN (SELECT cnt FROM OtherStatinPatients) > 0 THEN (SELECT cnt FROM OtherStatinPatients) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "ten"
+            ]
+        ]
+    },
+    {
+        "task_id": "32",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "You are assisting with a clinical study on acute kidney injury (AKI) in ICU patients. The study aims to identify patients who exhibit kidney dysfunction alongside hemodynamic instability, while excluding those with pre-existing chronic kidney conditions. First, identify patients who meet the following inclusion criteria: - Kidney dysfunction, defined as either: (a) serum creatinine > 2.0 mg/dL for males or > 1.8 mg/dL for females, OR (b) 24-hour daily urine output total < 200 mL on any single day - Critical vital signs at the same time point: heart rate > 100 bpm AND systolic blood pressure < 90 mmHg Then, exclude patients with: - Pre-existing chronic kidney disease (including chronic renal insufficiency, ESRD, or end-stage renal disease) - Age under 18 Among the eligible patients, check if any have been diagnosed with hepatorenal syndrome recorded exactly as 'hepatorenal syndrome'. If so, report how many such patients exist. If no eligible patient has hepatorenal syndrome, broaden the search to include any acute renal failure diagnosis (such as acute renal failure, acute kidney injury, or acute tubular necrosis), excluding hepatorenal syndrome, and report the count. If neither category yields results, report that no matching patients were found. Report the final count in words rather than numerals (e.g., 123 \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH KidneyDysfunction AS ( SELECT DISTINCT ip.patient_id, ip.unit_id FROM lab l JOIN icupatient ip ON l.unit_id = ip.unit_id WHERE l.lab_name = 'creatinine' AND ( (ip.gender = 'male' AND l.lab_result > 2.0) OR (ip.gender = 'female' AND l.lab_result > 1.8)) UNION SELECT ip.patient_id, ip.unit_id FROM fluid_balance fb JOIN icupatient ip ON fb.unit_id = ip.unit_id WHERE fb.fluid_path LIKE '%output%' AND (fb.fluid_label LIKE '%urine%' OR fb.fluid_label LIKE '%foley%') AND fb.fluid_label NOT LIKE '%occurrence%' AND fb.fluid_label NOT LIKE '%count%' GROUP BY ip.patient_id, ip.unit_id, DATE(fb.fluid_balance_time) HAVING SUM(fb.fluid_value_numeric) < 200 ), CriticalVitals AS ( SELECT DISTINCT ip.patient_id, ip.unit_id FROM vital_signs vs JOIN icupatient ip ON vs.unit_id = ip.unit_id WHERE vs.heart_rate > 100 AND vs.systolic_bp < 90 ), InclusionCriteria AS ( SELECT DISTINCT kd.patient_id, kd.unit_id FROM KidneyDysfunction kd JOIN CriticalVitals cv ON kd.unit_id = cv.unit_id ), ExclusionCKD AS ( SELECT ip.patient_id, ip.unit_id FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%chronic kidney disease%' OR c.condition_name LIKE '%chronic renal%' OR c.condition_name LIKE '%esrd%' OR c.condition_name LIKE '%end stage renal%' ), ExclusionAge AS ( SELECT DISTINCT ip.patient_id, ip.unit_id FROM icupatient ip WHERE ip.age < 18 ), EligiblePatients AS ( SELECT DISTINCT ic.patient_id, ic.unit_id FROM InclusionCriteria ic WHERE NOT EXISTS (SELECT 1 FROM ExclusionCKD eckd WHERE eckd.unit_id = ic.unit_id) AND NOT EXISTS (SELECT 1 FROM ExclusionAge ea WHERE ea.unit_id = ic.unit_id) ), HepatoRenalPatients AS ( SELECT COUNT(DISTINCT ep.patient_id) AS cnt FROM EligiblePatients ep JOIN condition c ON ep.unit_id = c.unit_id WHERE c.condition_name = 'hepatorenal syndrome' ), AcuteRenalPatients AS ( SELECT COUNT(DISTINCT ep.patient_id) AS cnt FROM EligiblePatients ep JOIN condition c ON ep.unit_id = c.unit_id WHERE ( c.condition_name LIKE '%acute renal failure%' OR c.condition_name LIKE '%acute kidney%' OR c.condition_name LIKE '%acute tubular necrosis%') AND c.condition_name != 'hepatorenal syndrome' ) SELECT CASE WHEN (SELECT cnt FROM HepatoRenalPatients) > 0 THEN (SELECT cnt FROM HepatoRenalPatients) WHEN (SELECT cnt FROM AcuteRenalPatients) > 0 THEN (SELECT cnt FROM AcuteRenalPatients) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "nine"
+            ]
+        ]
+    },
+    {
+        "task_id": "33",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "You are assisting with a clinical study evaluating the need for renal replacement therapy (RRT)among ICU patients presenting with concurrent electrolyte disturbances and renal dysfunction. First, identify patients who had all of the following based on lab measurements recorded today during the same ICU admission: 1. At least one electrolyte imbalance: - Serum bicarbonate < 22 mEq/L - Serum sodium < 125 mEq/L or > 150 mEq/L - Serum potassium < 3.5 mEq/L or > 5.5 mEq/L 2. Renal dysfunction: serum creatinine > 1.3 mg/dL for males or > 1.1 mg/dL for females Among these eligible patients, determine how many have received hemodialysis specifically for acute renal failure, recorded exactly as 'hemodialysis - for acute renal failure'. If no eligible patient has this specific treatment, broaden the search to include any hemodialysis treatment and report that count. If neither category yields results, report that no matching patients were found. Report the final count in words rather than numerals (e.g., 123 \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH ElectrolyteImbalances AS ( SELECT DISTINCT ip.patient_id, l.unit_id FROM lab l JOIN icupatient ip ON l.unit_id = ip.unit_id WHERE datetime(l.lab_result_time, 'start of day') = datetime('2100-12-31 23:59:00', 'start of day') AND ( ( (l.lab_name = 'bicarbonate' OR l.lab_name = 'hco3') AND l.lab_result < 22 ) OR ( l.lab_name = 'sodium' AND (l.lab_result < 125 OR l.lab_result > 150) ) OR ( l.lab_name = 'potassium' AND (l.lab_result < 3.5 OR l.lab_result > 5.5) ) ) ), RenalAbnormalities AS ( SELECT DISTINCT ip.patient_id, l.unit_id FROM lab l JOIN icupatient ip ON l.unit_id = ip.unit_id WHERE datetime(l.lab_result_time, 'start of day') = datetime('2100-12-31 23:59:00', 'start of day') AND l.lab_name = 'creatinine' AND ( (ip.gender = 'male' AND l.lab_result > 1.3) OR (ip.gender = 'female' AND l.lab_result > 1.1) ) ), EligiblePatients AS ( SELECT DISTINCT e.patient_id, e.unit_id FROM ElectrolyteImbalances e JOIN RenalAbnormalities r ON e.unit_id = r.unit_id ), AcuteRFHemodialysis AS ( SELECT COUNT(DISTINCT ep.patient_id) AS cnt FROM EligiblePatients ep JOIN treatment t ON ep.unit_id = t.unit_id WHERE t.treatment_name = 'hemodialysis - for acute renal failure' ), OtherHemodialysis AS ( SELECT COUNT(DISTINCT ep.patient_id) AS cnt FROM EligiblePatients ep JOIN treatment t ON ep.unit_id = t.unit_id WHERE t.treatment_name LIKE '%hemodialysis%' AND t.treatment_name != 'hemodialysis - for acute renal failure' ) SELECT CASE WHEN (SELECT cnt FROM AcuteRFHemodialysis) > 0 THEN (SELECT cnt FROM AcuteRFHemodialysis) WHEN (SELECT cnt FROM OtherHemodialysis) > 0 THEN (SELECT cnt FROM OtherHemodialysis) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "two"
+            ]
+        ]
+    },
+    {
+        "task_id": "34",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "You are assisting with a clinical study evaluating anticoagulation prescribing patterns in ICU patients with atrial fibrillation or atrial flutter who have elevated thromboembolic risk. First, identify eligible patients who meet both of the following criteria during the same ICU admission: 1. Diagnosis of atrial fibrillation (including all variants such as paroxysmal, with rapid ventricular response, etc.) or atrial flutter 2. At least two of the following thromboembolic risk factors: - Age > 75 years - Stroke or TIA (transient ischemic attack) - Diabetes mellitus - Congestive heart failure Among the eligible patients, check if any have been prescribed apixaban recorded exactly as 'apixaban'. If so, report how many such patients exist. If no eligible patient has been prescribed apixaban, broaden the search to include any other anticoagulant therapy (such as warfarin, heparin, enoxaparin, or other anticoagulants), excluding apixaban, and report the count. If neither category yields results, report that no matching patients were found. Report the final count in words rather than numerals (e.g., 123 \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH AFPatients AS ( SELECT DISTINCT ip.patient_id, ip.unit_id, ip.age FROM condition c JOIN icupatient ip ON c.unit_id = ip.unit_id WHERE c.condition_name LIKE '%atrial fibrillation%' OR c.condition_name LIKE '%atrial flutter%' ), EligiblePatients AS ( SELECT DISTINCT af.patient_id, af.unit_id FROM AFPatients af WHERE ( CASE WHEN af.age > 75 THEN 1 ELSE 0 END + CASE WHEN EXISTS ( SELECT 1 FROM condition c WHERE c.unit_id = af.unit_id AND ( c.condition_name LIKE '%stroke%' OR c.condition_name = 'tia' OR c.condition_name LIKE '%transient ischemic%' ) ) THEN 1 ELSE 0 END + CASE WHEN EXISTS ( SELECT 1 FROM condition c WHERE c.unit_id = af.unit_id AND c.condition_name LIKE '%diabetes mellitus%' ) THEN 1 ELSE 0 END + CASE WHEN EXISTS ( SELECT 1 FROM condition c WHERE c.unit_id = af.unit_id AND c.condition_name LIKE '%congestive heart failure%' ) THEN 1 ELSE 0 END ) >= 2 ), ApixabanPatients AS ( SELECT COUNT(DISTINCT ep.patient_id) AS cnt FROM EligiblePatients ep JOIN prescription pr ON ep.unit_id = pr.unit_id WHERE pr.drug_name = 'apixaban' ), OtherAnticoagPatients AS ( SELECT COUNT(DISTINCT ep.patient_id) AS cnt FROM EligiblePatients ep JOIN prescription pr ON ep.unit_id = pr.unit_id WHERE ( pr.drug_name LIKE '%warfarin%' OR pr.drug_name LIKE '%coumadin%' OR pr.drug_name LIKE '%heparin%' OR pr.drug_name LIKE '%enoxaparin%' OR pr.drug_name LIKE '%rivaroxaban%' OR pr.drug_name LIKE '%dabigatran%' OR pr.drug_name LIKE '%edoxaban%' ) AND pr.drug_name NOT LIKE '%apixaban%' ) SELECT CASE WHEN (SELECT cnt FROM ApixabanPatients) > 0 THEN (SELECT cnt FROM ApixabanPatients) WHEN (SELECT cnt FROM OtherAnticoagPatients) > 0 THEN (SELECT cnt FROM OtherAnticoagPatients) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "six"
+            ]
+        ]
+    },
+    {
+        "task_id": "35",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to patient diagnoses. Specifically, you want to find the number of patients diagnosed with biliary obstruction in the emergency information table. The diagnosis should include the term 'biliary obstruction.' You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three). If no dedicated emergency information table exists in the database, then repeat the question, but focus on patients diagnosed with biliary obstruction who were admitted to the emergency room.",
+        "gold_sql": "SELECT COUNT(DISTINCT ip.patient_id) AS patient_count FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE ip.hospital_admission_source = 'emergency department' AND c.condition_name LIKE '%biliary obstruction%';",
+        "gold_answer": [
+            [
+                "three"
+            ]
+        ]
+    },
+    {
+        "task_id": "36",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to patient treatments. Specifically, you want to find the name of the most frequently used anticancer drug in the anticancer regimen table. If the anticancer regimen table exists in the database, you want to know the most frequently administered treatment name. If the anticancer regimen table does not exist in the database, you want to know the most frequently administered treatment containing the word \"chemo.\" If multiple treatments occur with the same highest frequency, you want to know all of them. You want the answer to be the exact treatment name as recorded in the database.",
+        "gold_sql": "SELECT treatment_name FROM ( SELECT treatment_name, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) AS rank FROM treatment WHERE treatment_name LIKE '%chemo%' GROUP BY treatment_name ) AS ranked WHERE rank = 1;",
+        "gold_answer": [
+            [
+                "chemotherapy"
+            ]
+        ]
+    },
+    {
+        "task_id": "37",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore cancer-related patient statistics. Specifically, you want to know the number of patients diagnosed with breast cancer in the outpatient information table. If the outpatient information table exists in the database, you want to know the number of patients with a diagnosis code indicating breast cancer. If the outpatient information table does not exist in the database, you want to know the number of breast cancer patients in other diagnosis-related table. You want the number of patients reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three).",
+        "gold_sql": "SELECT COUNT(DISTINCT ip.patient_id) FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE c.condition_name LIKE '%breast ca%';",
+        "gold_answer": [
+            [
+                "five"
+            ]
+        ]
+    },
+    {
+        "task_id": "38",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "Your goal is to explore statistics related to patient diagnoses. Specifically, you want to know the gender ratio of lung cancer patients in the cancer registry table. If the cancer registry table is available in the database, you want to know the gender ratio of patients with a cancer type of lung cancer. If the cancer registry table is not available in the database, you want to know the gender ratio of patients with a diagnosis of lung cancer. When asked about gender ratio calculations, you want to divide the number of male patients by the number of female patients and round the result to four decimal places. If a patient has one or more lung cancer records, even if cured, count them only once.",
+        "gold_sql": "WITH lung_patients AS (SELECT DISTINCT i.patient_id, i.gender FROM CONDITION c JOIN icupatient i ON c.unit_id = i.unit_id WHERE c.condition_name LIKE '%lung ca%') SELECT ROUND(SUM(CASE WHEN gender='male' THEN 1 ELSE 0 END)*1.0 / SUM(CASE WHEN gender='female' THEN 1 ELSE 0 END), 4) AS gender_ratio FROM lung_patients;",
+        "gold_answer": [
+            [
+                1.0769
+            ]
+        ]
+    },
+    {
+        "task_id": "39",
+        "task_type": "adapt",
+        "db_id": "eicu_star",
+        "instruction": "You are studying opioid-related ED visits. Specifically, you first want to check for the existence of ed_toxicology, ed_screening, or uds (urine drug screen) tables. If found, count distinct patients with positive opioid results. If no such table exists, fall back to condition table diagnoses containing 'opioid', 'heroin', 'fentanyl', or 'overdose' among patients with emergency admission source. You want the number of patients reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three).",
+        "gold_sql": "SELECT COUNT(DISTINCT ip.patient_id) AS patient_count FROM icupatient ip JOIN condition c ON ip.unit_id = c.unit_id WHERE ip.hospital_admission_source = 'emergency department' AND ( c.condition_name LIKE '%overdose%' OR c.condition_name LIKE '%opioid%' OR c.condition_name LIKE '%fentanyl%' OR c.condition_name LIKE '%heroin%' );",
+        "gold_answer": [
+            [
+                "seventy-two"
+            ]
+        ]
+    }
+]

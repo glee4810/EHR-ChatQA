@@ -1,0 +1,37 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Data (PhysioNet credentialed access required)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# FAISS indices (auto-generated on first run)
+faiss_index_*/
+
+# Results
+results/
+
+# Analysis scripts and outputs (development only)
+alignment_analysis.py
+alignment_issues.json
+analyze_adapt.py
+analyze_adapt_deep.py
+deep_validation.py
+deep_validation_results.json
+semantic_audit.py
+spot_check.py
+validate_annotations.py
+validate_adapt.py
+validation_results.json
+validation_adapt_results.json
+change_log.md
+
+# Misc
+Untitled
+temp/
+*.sqlite-journal
