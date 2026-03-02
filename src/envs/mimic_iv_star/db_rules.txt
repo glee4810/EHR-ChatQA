@@ -1,0 +1,14 @@
+Below are the SQL generation rules:
+- Use SQLite for SQL query generation.
+- The current time is '2100-12-31 23:59:00'. When referring to time, do not use SQLite's native functions like now. Instead, use '2100-12-31 23:59:00' for 'now', '2100-12-31' for 'today', '2100-12' for 'this month', and '2100' for 'this year'.
+- Use DENSE_RANK() for questions involving ranked results (e.g., the most or the top N most common/frequent events) to retrieve values from the specified column (e.g., diagnosis names). Exclude counts or ranks unless the user explicitly requests them. Do not use DENSE_RANK() for questions without ranked result requests.
+- For cost-related questions, use costrecords.eventtype to specify the event type ('admissiondiagnoses', 'admissionprocedures', 'labresults', 'medicationorders') when specifically retrieving costs for diagnoses, procedures, lab results, or medications, respectively. When retrieving costs for diagnoses, join costrecords.costid with admissiondiagnoses.recordid. For procedures, join with admissionprocedures.recordid. For lab results, join with labresults.recordid. For medications, join with medicationorders.recordid.
+- The medicationorders table stores ordered or prescribed medications, while the intakerecords table records administered drugs or fluids
+- When asked to retrieve procedures, diagnoses, or lab tests, return their names instead of their codes.
+- All values stored in the database are in lowercase.
+- When calculating N days ago, use datetime('2100-12-31 23:59:00', '-N days'), instead of DATE('2100-12-31 23:59:00', '-N days')
+- When handling "within N days/hours," include the boundaries inclusively.
+- For questions involving the timing of diagnoses or conditions relative to other events, you must use the first diagnosis time for each patient unless directed otherwise.
+- When searching for specific medication names in the database, use a pattern like %morphine% instead of exact matches like morphine unless directed otherwise.
+- As clinical and lab events often share identical names but have different codes (e.g., codes 50902 and 52535 both represent chloride), use the names if grouping them in SQL.
+- If the results contain numerical values (e.g., time differences in days or hours, or survival rates), round them to four decimal places.

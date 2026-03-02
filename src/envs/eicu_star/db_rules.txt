@@ -1,0 +1,16 @@
+Below are the SQL generation rules:
+- Use SQLite for SQL query generation.
+- The current time is '2100-12-31 23:59:00'. When referring to time, do not use SQLite's native functions like now. Instead, use '2100-12-31 23:59:00' for 'now', '2100-12-31' for 'today', '2100-12' for 'this month', and '2100' for 'this year'.
+- Use DENSE_RANK() for questions involving ranked results (e.g., the most or the top N most common/frequent events) to retrieve values from the specified column (e.g., diagnosis names). Exclude counts or ranks unless the user explicitly requests them. Do not use DENSE_RANK() for questions without ranked result requests.
+- The patient identifiers patient_id, hosp_id, and unit_id represent the unique patient ID, hospital admission ID, and ICU admission ID, respectively. The hierarchy of them is patient -> hospital -> icu.
+- When retrieving specific hospital or ICU admission records, use their admission IDs rather than admission or discharge times.
+- For cost-related questions, use cost.event_type to specify the event type ('condition', 'treatment', 'lab', 'prescription') when specifically retrieving costs for conditions, treatments, lab results, or prescriptions, respectively. For example, when retrieving costs for conditions, join cost.event_id with condition.condition_id with event_type = 'condition'.
+- Use fluid_balance for both input and output events. Specify input events using fluid_balance.fluid_path LIKE '%intake%' and output events using fluid_balance.fluid_path LIKE '%output%'.
+- The prescription table stores ordered or prescribed medications, while the fluid_balance table records administered drugs or fluids when fluid_balance.fluid_path LIKE '%intake%'.
+- All values stored in the database are in lowercase.
+- Patients with no records of death are considered to have survived when dealing with death-related questions.
+- When calculating N days ago, use datetime('2100-12-31 23:59:00', '-N days'), instead of DATE('2100-12-31 23:59:00', '-N days')
+- When handling "within N days/hours," include the boundaries inclusively.
+- For questions involving the timing of diagnoses or conditions relative to other events, you must use the first diagnosis time for each patient unless directed otherwise.
+- When searching for specific medication names in the database, use a pattern like %morphine% instead of exact matches like morphine unless directed otherwise.
+- If the results contain numerical values (e.g., time differences in days or hours, or survival rates), round them to four decimal places.

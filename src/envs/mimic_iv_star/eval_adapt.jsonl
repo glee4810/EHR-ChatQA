@@ -1,0 +1,500 @@
+[
+    {
+        "task_id": "0",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to know the number of patients prescribed a medication recorded exactly as 'lipitor.' You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three). If no patients are prescribed under the exact name 'lipitor,' you want to ask the same question using medications whose name contains its generic name.",
+        "gold_sql": "WITH LipitorPatients AS ( SELECT DISTINCT patientid FROM medicationorders WHERE medicationname = 'lipitor' ), AtorvastatinPatients AS ( SELECT DISTINCT patientid FROM medicationorders WHERE medicationname LIKE '%atorvastatin%' ) SELECT CASE WHEN EXISTS (SELECT 1 FROM LipitorPatients) THEN (SELECT COUNT(patientid) FROM LipitorPatients) ELSE (SELECT COUNT(patientid) FROM AtorvastatinPatients) END AS final_count;",
+        "gold_answer": [
+            [
+                "nineteen"
+            ]
+        ]
+    },
+    {
+        "task_id": "1",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to find the average hospital admission age of heart failure patients prescribed a medication recorded exactly as 'lasix.' When calculating patient ages, you want to include each patient's age only once, based on the age recorded at their earliest hospital admission where a heart failure diagnosis and Lasix prescription both occurred. You want the result rounded to four decimal places. If no patients were prescribed medication under the exact name 'lasix,' you want to repeat the same question using medications containing Lasix's generic name.",
+        "gold_sql": "WITH valid_heart_failure_codes AS ( SELECT DISTINCT d.icdcode, d.codeversion, di.description FROM admissiondiagnoses d JOIN diagnosiscodes di ON d.icdcode = di.icdcode AND d.codeversion = di.codeversion WHERE ((d.icdcode LIKE '428%' AND d.codeversion = 9) OR (d.icdcode LIKE 'i50%' AND d.codeversion = 10)) ), first_hf_diagnosis AS ( SELECT d.patientid, d.admissionid, MIN(d.recordeddatetime) AS first_hf_time FROM admissiondiagnoses d JOIN valid_heart_failure_codes hfd ON d.icdcode = hfd.icdcode AND d.codeversion = hfd.codeversion GROUP BY d.patientid, d.admissionid ), lasix_ranked AS ( SELECT a.patientid, a.age AS admission_age, ROW_NUMBER() OVER ( PARTITION BY a.patientid ORDER BY a.admitdatetime ) AS rn FROM hospitaladmissions a JOIN first_hf_diagnosis f ON a.admissionid = f.admissionid JOIN medicationorders p ON a.admissionid = p.admissionid WHERE p.medicationname = 'lasix' AND p.startdatetime >= f.first_hf_time ), lasix_admissions AS ( SELECT admission_age FROM lasix_ranked WHERE rn = 1 ), furosemide_ranked AS ( SELECT a.patientid, a.age AS admission_age, ROW_NUMBER() OVER ( PARTITION BY a.patientid ORDER BY a.admitdatetime ) AS rn FROM hospitaladmissions a JOIN first_hf_diagnosis f ON a.admissionid = f.admissionid JOIN medicationorders p ON a.admissionid = p.admissionid WHERE p.medicationname = 'furosemide' AND p.startdatetime >= f.first_hf_time ), furosemide_admissions AS ( SELECT admission_age FROM furosemide_ranked WHERE rn = 1 ), combined_ages AS ( SELECT admission_age FROM lasix_admissions WHERE EXISTS (SELECT 1 FROM lasix_admissions) UNION ALL SELECT admission_age FROM furosemide_admissions WHERE NOT EXISTS (SELECT 1 FROM lasix_admissions) ) SELECT ROUND(AVG(admission_age), 4) AS average_age FROM combined_ages;",
+        "gold_answer": [
+            [
+                72.6667
+            ]
+        ]
+    },
+    {
+        "task_id": "2",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to find the most common diagnosis name received by patients prescribed a medication recorded exactly as 'vancocin' during the same hospital admission. If multiple results tie for the highest frequency, you want to retrieve all of them. If a patient has multiple records of Vancocin across hospital admissions, you only want the first Vancocin record among them. If a patient has multiple records of the same diagnosis name, you want to count them only once per hospital admission. You want the answer to be based on the exact diagnosis name recorded in the database. If no patients were prescribed medication under the exact name 'vancocin,' you want to repeat the same question using medications whose name contains Vancocin's generic name",
+        "gold_sql": "WITH VancocinCheck AS ( SELECT COUNT(*) AS vancocin_count FROM medicationorders WHERE medicationname = 'vancocin' ), FirstPrescription AS ( SELECT mo.patientid, mo.admissionid, mo.startdatetime, ROW_NUMBER() OVER ( PARTITION BY mo.patientid ORDER BY mo.startdatetime ) AS rn FROM medicationorders mo JOIN VancocinCheck vc WHERE (vc.vancocin_count > 0 AND mo.medicationname = 'vancocin') OR (vc.vancocin_count = 0 AND mo.medicationname LIKE '%vancomycin%') GROUP BY mo.patientid, mo.admissionid, mo.startdatetime ), SelectedAdmissions AS ( SELECT patientid, admissionid FROM FirstPrescription WHERE rn = 1 ), UniqueDiagnoses AS ( SELECT DISTINCT ad.admissionid, dc.description FROM SelectedAdmissions sa JOIN admissiondiagnoses ad ON ad.admissionid = sa.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion ), DiagnosisCounts AS ( SELECT description, COUNT(*) AS diag_count, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) AS rank FROM UniqueDiagnoses GROUP BY description ) SELECT description FROM DiagnosisCounts WHERE rank = 1 ORDER BY rank;",
+        "gold_answer": [
+            [
+                "unspecified essential hypertension"
+            ]
+        ]
+    },
+    {
+        "task_id": "3",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to know the percentage of patients diagnosed with atrial fibrillation who were also prescribed a medication recorded exactly as 'lopressor' during the same hospital admission, out of the total atrial fibrillation patients. You want the result in percentage (%). You want the result rounded to four decimal places. If no patients were prescribed medication under the exact name 'lopressor,' you want to repeat the same question using medications whose name contains Lopressor's generic name.",
+        "gold_sql": "WITH af_diagnoses AS ( SELECT d.patientid, d.admissionid, MIN(d.recordeddatetime) AS first_af_time FROM admissiondiagnoses d JOIN diagnosiscodes dd ON d.icdcode = dd.icdcode AND d.codeversion = dd.codeversion WHERE dd.description LIKE '%atrial fibrillation%' GROUP BY d.patientid, d.admissionid ), lopressor_patients AS ( SELECT DISTINCT f.patientid, MIN(f.first_af_time) FROM af_diagnoses f JOIN medicationorders p ON p.admissionid = f.admissionid WHERE p.medicationname = 'lopressor' GROUP BY f.patientid ), metoprolol_patients AS ( SELECT DISTINCT f.patientid, MIN(f.first_af_time) FROM af_diagnoses f JOIN medicationorders p ON p.admissionid = f.admissionid WHERE p.medicationname LIKE '%metoprolol%' GROUP BY f.patientid ), combined_patients AS ( SELECT patientid FROM lopressor_patients WHERE EXISTS (SELECT 1 FROM lopressor_patients) UNION ALL SELECT patientid FROM metoprolol_patients WHERE NOT EXISTS (SELECT 1 FROM lopressor_patients) ), total_af_patients AS ( SELECT COUNT(DISTINCT patientid) AS total_count FROM af_diagnoses ), medicated_af_patients AS ( SELECT COUNT(DISTINCT patientid) AS med_count FROM combined_patients ) SELECT ROUND(100.0 * (SELECT med_count FROM medicated_af_patients) / (SELECT total_count FROM total_af_patients), 4);",
+        "gold_answer": [
+            [
+                69.5652
+            ]
+        ]
+    },
+    {
+        "task_id": "4",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to know the number of male patients diagnosed with atherosclerotic cardiovascular disease (ASCVD) who were prescribed a medication recorded exactly as 'lipitor' during the same hospital admission. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three). If no male ASCVD patients were prescribed medication under the exact name 'lipitor,' you want to repeat the same question using medications containing Lipitor's generic name.",
+        "gold_sql": "WITH ascvd_diagnoses AS ( SELECT d.patientid, d.admissionid, MIN(d.recordeddatetime) AS first_ascvd_time FROM admissiondiagnoses d JOIN diagnosiscodes dd ON d.icdcode = dd.icdcode AND d.codeversion = dd.codeversion WHERE (dd.codeversion = 10 AND (dd.icdcode LIKE 'I20%' OR dd.icdcode LIKE 'I21%' OR dd.icdcode LIKE 'I22%' OR dd.icdcode LIKE 'I23%' OR dd.icdcode LIKE 'I24%' OR dd.icdcode LIKE 'I25%' OR dd.icdcode LIKE 'I70%')) OR (dd.codeversion = 9 AND (dd.icdcode LIKE '410%' OR dd.icdcode LIKE '411%' OR dd.icdcode LIKE '412%' OR dd.icdcode LIKE '413%' OR dd.icdcode LIKE '414%' OR dd.icdcode LIKE '440%')) GROUP BY d.patientid, d.admissionid ), lipitor_patients AS ( SELECT DISTINCT f.patientid, MIN(f.first_ascvd_time) FROM ascvd_diagnoses f JOIN medicationorders p ON p.admissionid = f.admissionid JOIN demographics dem ON dem.patientid = f.patientid WHERE p.medicationname = 'lipitor' AND dem.gender = 'm' GROUP BY f.patientid ), atorvastatin_patients AS ( SELECT DISTINCT f.patientid, MIN(f.first_ascvd_time) FROM ascvd_diagnoses f JOIN medicationorders p ON p.admissionid = f.admissionid JOIN demographics dem ON dem.patientid = f.patientid WHERE p.medicationname LIKE '%atorvastatin%' AND dem.gender = 'm' GROUP BY f.patientid ), combined_patients AS ( SELECT patientid FROM lipitor_patients WHERE EXISTS (SELECT 1 FROM lipitor_patients) UNION ALL SELECT patientid FROM atorvastatin_patients WHERE NOT EXISTS (SELECT 1 FROM lipitor_patients) ), medicated_ascvd_patients AS ( SELECT COUNT(DISTINCT patientid) AS med_count FROM combined_patients ) SELECT med_count FROM medicated_ascvd_patients;",
+        "gold_answer": [
+            [
+                "eleven"
+            ]
+        ]
+    },
+    {
+        "task_id": "5",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you first want to identify patients diagnosed with hyperlipidemia. You want to identify hyperlipidemia patients comprehensively based on ICD codes. Next, you want to know the number of patients who received the medication recorded exactly as 'lovastatin' after or at the time of diagnosis during the same hospital admission. You want the number of patients reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three). If no hyperlipidemia patients were prescribed exactly 'lovastatin,' you want to ask for the number of patients with hyperlipidemia who received any medication of the same drug class as Lovastatin during the same hospital admission.",
+        "gold_sql": "WITH valid_hyperlipidemia_codes AS ( SELECT icdcode, codeversion FROM diagnosiscodes WHERE (icdcode LIKE '2720%' AND codeversion = 9) OR (icdcode LIKE '2721%' AND codeversion = 9) OR (icdcode LIKE '2722%' AND codeversion = 9) OR (icdcode LIKE '2723%' AND codeversion = 9) OR (icdcode LIKE '2724%' AND codeversion = 9) OR (icdcode LIKE 'e780%' AND codeversion = 10) OR (icdcode LIKE 'e781%' AND codeversion = 10) OR (icdcode LIKE 'e782%' AND codeversion = 10) OR (icdcode LIKE 'e783%' AND codeversion = 10) OR (icdcode LIKE 'e784%' AND codeversion = 10) OR (icdcode LIKE 'e785%' AND codeversion = 10) ), hyper_diagnoses AS ( SELECT d.patientid, d.admissionid, MIN(d.recordeddatetime) AS first_hyper_time FROM admissiondiagnoses d JOIN valid_hyperlipidemia_codes h ON d.icdcode = h.icdcode AND d.codeversion = h.codeversion GROUP BY d.patientid, d.admissionid ), lovastatin_patients AS ( SELECT DISTINCT f.patientid FROM hyper_diagnoses f JOIN medicationorders p ON p.admissionid = f.admissionid WHERE p.medicationname = 'lovastatin' AND p.startdatetime >= f.first_hyper_time ), statin_patients AS ( SELECT DISTINCT f.patientid FROM hyper_diagnoses f JOIN medicationorders p ON p.admissionid = f.admissionid WHERE p.medicationname IN ('atorvastatin', 'fluvastatin', 'pitavastatin', 'pravastatin', 'rosuvastatin', 'simvastatin', 'rosuvastatin calcium') AND p.startdatetime >= f.first_hyper_time ), combined_patients AS ( SELECT patientid FROM lovastatin_patients WHERE EXISTS (SELECT 1 FROM lovastatin_patients) UNION ALL SELECT patientid FROM statin_patients WHERE NOT EXISTS (SELECT 1 FROM lovastatin_patients) ) SELECT COUNT(DISTINCT patientid) AS patient_count FROM combined_patients;",
+        "gold_answer": [
+            [
+                "twenty-eight"
+            ]
+        ]
+    },
+    {
+        "task_id": "6",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to find the percentage of patients diagnosed with hypertension who were prescribed a medication recorded exactly as benazepril at least once during the same hospital admission. You want to include all patients diagnosed with hypertension, including essential hypertension, hypertensive heart disease, hypertensive chronic kidney disease, hypertensive heart and kidney disease, and secondary hypertension. You want the result in percentage (%). You want the result rounded to four decimal places. If no hypertension patients were prescribed medication under the exact name 'benazepril,' you want to repeat the same question using medications in the same drug class as benazepril.",
+        "gold_sql": "WITH valid_hypertension_codes AS (SELECT DISTINCT ac.icdcode, ac.codeversion, dc.description FROM admissiondiagnoses ac JOIN diagnosiscodes dc ON ac.icdcode = dc.icdcode AND ac.codeversion = dc.codeversion WHERE ((ac.icdcode LIKE '401%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '402%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '403%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '404%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '405%' AND ac.codeversion = 9) OR (ac.icdcode LIKE 'i10%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i11%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i12%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i13%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i15%' AND ac.codeversion = 10))), hypertension_diagnoses AS (SELECT DISTINCT ac.patientid, ac.admissionid FROM admissiondiagnoses ac JOIN valid_hypertension_codes vc ON ac.icdcode = vc.icdcode AND ac.codeversion = vc.codeversion), benazepril_patients AS (SELECT DISTINCT hd.patientid FROM hypertension_diagnoses hd JOIN medicationorders mo ON mo.admissionid = hd.admissionid WHERE mo.medicationname = 'benazepril'), ace_inhibitor_patients AS (SELECT DISTINCT hd.patientid FROM hypertension_diagnoses hd JOIN medicationorders mo ON mo.admissionid = hd.admissionid WHERE mo.medicationname IN ('captopril', 'enalapril maleate', 'lisinopril', 'ramipril')), combined_patients AS (SELECT patientid FROM benazepril_patients WHERE EXISTS (SELECT 1 FROM benazepril_patients) UNION ALL SELECT patientid FROM ace_inhibitor_patients WHERE NOT EXISTS (SELECT 1 FROM benazepril_patients)), total_hypertension_patients AS (SELECT COUNT(DISTINCT patientid) AS total_count FROM hypertension_diagnoses), medicated_hypertension_patients AS (SELECT COUNT(DISTINCT patientid) AS med_count FROM combined_patients) SELECT ROUND(100.0 * (SELECT med_count FROM medicated_hypertension_patients) / (SELECT total_count FROM total_hypertension_patients), 4);",
+        "gold_answer": [
+            [
+                24.1935
+            ]
+        ]
+    },
+    {
+        "task_id": "7",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to know the total number of patients diagnosed with asthma who were subsequently prescribed a medication recorded exactly as 'levalbuterol' at least once during the same hospital admission. You want the number of patients reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three). If no asthma patients were prescribed 'levalbuterol' under those conditions, you want to repeat the same question using medications in the same drug class as levalbuterol.",
+        "gold_sql": "WITH valid_asthma_codes AS ( SELECT DISTINCT d.icdcode, d.codeversion, di.description FROM admissiondiagnoses d JOIN diagnosiscodes di ON d.icdcode = di.icdcode AND d.codeversion = di.codeversion WHERE ((d.icdcode LIKE '493%' AND d.codeversion = 9) OR (d.icdcode LIKE 'j45%' AND d.codeversion = 10)) ), asthma_diagnoses AS ( SELECT d.patientid, d.admissionid, MIN(d.recordeddatetime) AS first_asthma_time FROM admissiondiagnoses d JOIN valid_asthma_codes c ON d.icdcode = c.icdcode AND d.codeversion = c.codeversion GROUP BY d.patientid, d.admissionid ), levalbuterol_patients AS ( SELECT DISTINCT f.patientid FROM asthma_diagnoses f JOIN medicationorders p ON p.admissionid = f.admissionid WHERE p.medicationname = 'levalbuterol' AND p.startdatetime > f.first_asthma_time ), saba_patients AS ( SELECT DISTINCT f.patientid FROM asthma_diagnoses f JOIN medicationorders p ON p.admissionid = f.admissionid WHERE ( p.medicationname LIKE '%albuterol%' OR p.medicationname LIKE '%terbutaline%' OR p.medicationname LIKE '%salbutamol%' ) AND p.medicationname != 'levalbuterol' AND p.startdatetime > f.first_asthma_time ), combined_patients AS ( SELECT patientid FROM levalbuterol_patients WHERE EXISTS (SELECT 1 FROM levalbuterol_patients) UNION ALL SELECT patientid FROM saba_patients WHERE NOT EXISTS (SELECT 1 FROM levalbuterol_patients) ) SELECT COUNT(DISTINCT patientid) AS patient_count FROM combined_patients;",
+        "gold_answer": [
+            [
+                "six"
+            ]
+        ]
+    },
+    {
+        "task_id": "8",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to know the percentage of patients diagnosed with atrial fibrillation who were also prescribed a medication whose name contains 'bisoprolol' at least once during the same hospital admission out of the total atrial fibrillation patients. You want the result in percentage (%). You want the result rounded to four decimal places. If no atrial fibrillation patients meeting the above conditions were prescribed a medication whose name contains 'bisoprolol,' you want to ask the same question but for patients prescribed any other selective beta blocker medication instead.",
+        "gold_sql": "WITH valid_af_codes AS ( SELECT DISTINCT d.icdcode, d.codeversion, di.description FROM admissiondiagnoses d JOIN diagnosiscodes di ON d.icdcode = di.icdcode AND d.codeversion = di.codeversion WHERE ( (d.icdcode LIKE '42731%' AND d.codeversion = 9) OR (d.icdcode LIKE 'i480%' AND d.codeversion = 10) OR (d.icdcode LIKE 'i481%' AND d.codeversion = 10) OR (d.icdcode LIKE 'i482%' AND d.codeversion = 10) OR (d.icdcode LIKE 'i4891%' AND d.codeversion = 10) ) ), af_patients AS ( SELECT DISTINCT d.patientid, d.admissionid, MIN(d.recordeddatetime) AS first_af_time FROM admissiondiagnoses d JOIN valid_af_codes h ON d.icdcode = h.icdcode AND d.codeversion = h.codeversion GROUP BY d.patientid, d.admissionid ), bisoprolol_patients AS ( SELECT DISTINCT f.patientid FROM af_patients f JOIN medicationorders p ON p.admissionid = f.admissionid WHERE p.medicationname LIKE '%bisoprolol%' ), other_selective_beta_blocker_patients AS ( SELECT DISTINCT f.patientid FROM af_patients f JOIN medicationorders p ON p.admissionid = f.admissionid WHERE ( p.medicationname LIKE '%acebutolol%' OR p.medicationname LIKE '%atenolol%' OR p.medicationname LIKE '%betaxolol%' OR p.medicationname LIKE '%celiprolol%' OR p.medicationname LIKE '%esmolol%' OR p.medicationname LIKE '%metoprolol%' OR p.medicationname LIKE '%nebivolol%' ) ), combined_patients AS ( SELECT patientid FROM bisoprolol_patients WHERE EXISTS (SELECT 1 FROM bisoprolol_patients) UNION ALL SELECT patientid FROM other_selective_beta_blocker_patients WHERE NOT EXISTS (SELECT 1 FROM bisoprolol_patients) ), total_af_patients AS ( SELECT COUNT(DISTINCT patientid) AS total_count FROM af_patients ), medicated_af_patients AS ( SELECT COUNT(DISTINCT patientid) AS med_count FROM combined_patients ) SELECT ROUND(100.0 * (SELECT med_count FROM medicated_af_patients) / (SELECT total_count FROM total_af_patients), 4);",
+        "gold_answer": [
+            [
+                73.913
+            ]
+        ]
+    },
+    {
+        "task_id": "9",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to medication prescriptions. Specifically, you want to identify patients diagnosed with Hyperlipidemia. You want to know the number of patients who were prescribed a medication recorded exactly as 'bezafibrate' during the same hospital admission. You want the number of patients reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three). If no hyperlipidemia patients were prescribed exactly 'bezafibrate,' you want to request the number of patients who received any medications in the same drug class as Bezafibrate.",
+        "gold_sql": "WITH hyperlipidemia_patients AS ( SELECT DISTINCT d.patientid, d.admissionid FROM admissiondiagnoses d WHERE ( (d.icdcode IN ('2720', '2721', '2722', '2723', '2724') AND d.codeversion = 9) OR (d.icdcode IN ('e780', 'e781', 'e782', 'e783', 'e784', 'e785') AND d.codeversion = 10) ) ), bezafibrate_patients AS ( SELECT DISTINCT h.patientid FROM hyperlipidemia_patients h JOIN medicationorders p ON p.admissionid = h.admissionid WHERE p.medicationname = 'bezafibrate' ), fibrate_patients AS ( SELECT DISTINCT h.patientid FROM hyperlipidemia_patients h JOIN medicationorders p ON p.admissionid = h.admissionid WHERE p.medicationname IN ( 'fenofibrate', 'gemfibrozil', 'ciprofibrate', 'clofibrate', 'etofibrate', 'pemafibrate' ) ), combined_patients AS ( SELECT patientid FROM bezafibrate_patients WHERE EXISTS (SELECT 1 FROM bezafibrate_patients) UNION ALL SELECT patientid FROM fibrate_patients WHERE NOT EXISTS (SELECT 1 FROM bezafibrate_patients) ) SELECT COUNT(DISTINCT patientid) AS patient_count FROM combined_patients",
+        "gold_answer": [
+            [
+                "two"
+            ]
+        ]
+    },
+    {
+        "task_id": "10",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient data related to medication prescriptions. Specifically, you are interested in patient ID 10007795 and want to know when they were prescribed a statin for hyperlipidemia management after their first hyperlipidemia diagnosis. If the patient was prescribed a statin, you want to know the most recent prescription time after the diagnosis. If the patient was not prescribed any statin, you want to identify whether any other lipid-lowering medication from a different drug class was prescribed. If such medications are found, you want to know the most recent prescription time after the diagnosis. If no such medications are found, end the conversation. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "WITH ValidHyperlipidemiaCodes AS ( SELECT DISTINCT d.icdcode, d.codeversion FROM admissiondiagnoses d JOIN diagnosiscodes di ON d.icdcode = di.icdcode AND d.codeversion = di.codeversion WHERE ( (d.icdcode IN ('2720', '2721', '2722', '2723', '2724') AND d.codeversion = 9) OR (d.icdcode IN ('e780', 'e781', 'e782', 'e783', 'e784', 'e785') AND d.codeversion = 10) ) ), FirstHyperlipidemiaDiagnosis AS ( SELECT d.patientid, MIN(d.recordeddatetime) AS first_diagnosis_time FROM admissiondiagnoses d JOIN ValidHyperlipidemiaCodes h ON d.icdcode = h.icdcode AND d.codeversion = h.codeversion WHERE d.patientid = 10007795 GROUP BY d.patientid ), StatinPrescriptions AS ( SELECT p.patientid, MAX(p.startdatetime) AS most_recent_time FROM medicationorders p JOIN FirstHyperlipidemiaDiagnosis fhd ON p.patientid = fhd.patientid WHERE p.medicationname IN ('atorvastatin', 'pravastatin', 'rosuvastatin calcium', 'simvastatin') AND p.startdatetime >= fhd.first_diagnosis_time GROUP BY p.patientid ), NonStatinPrescriptions AS ( SELECT p.patientid, MAX(p.startdatetime) AS most_recent_time FROM medicationorders p JOIN FirstHyperlipidemiaDiagnosis fhd ON p.patientid = fhd.patientid WHERE p.medicationname IN ('ezetimibe', 'fenofibrate', 'gemfibrozil', 'fish oil (omega 3)') AND p.startdatetime >= fhd.first_diagnosis_time GROUP BY p.patientid ), CombinedResult AS ( SELECT most_recent_time, 1 AS priority FROM StatinPrescriptions UNION ALL SELECT most_recent_time, 2 AS priority FROM NonStatinPrescriptions ) SELECT most_recent_time FROM CombinedResult ORDER BY priority, most_recent_time DESC LIMIT 1;",
+        "gold_answer": [
+            [
+                "2100-10-02 12:00:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "11",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient data related to medication prescriptions. Specifically, you are interested in patient ID 10021312 and want to know when they were prescribed an SSRI for major depressive disorder (MDD) treatment after their first MDD diagnosis. If the patient was prescribed an SSRI, you want to know the most recent prescription time after the diagnosis. If the patient was not prescribed any SSRI, you want to identify whether any other class of medications commonly prescribed in the context of MDD treatment was prescribed after the first MDD diagnosis. If such medications are found, you want to know the most recent prescription time. If no such medications are found, end the conversation. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "WITH FirstMDDDiagnosis AS ( SELECT ad.patientid, MIN(ad.recordeddatetime) AS first_diagnosis_time FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE ad.patientid = 10021312 AND dc.description LIKE '%major depressive disorder%' GROUP BY ad.patientid ), SSRIPrescriptions AS ( SELECT mo.patientid, MAX(mo.startdatetime) AS most_recent_time FROM medicationorders mo JOIN FirstMDDDiagnosis fd ON mo.patientid = fd.patientid WHERE mo.medicationname IN ( 'fluoxetine', 'sertraline', 'paroxetine', 'escitalopram', 'citalopram' ) AND mo.startdatetime > fd.first_diagnosis_time GROUP BY mo.patientid ), OtherMDDMedications AS ( SELECT mo.patientid, MAX(mo.startdatetime) AS most_recent_time FROM medicationorders mo JOIN FirstMDDDiagnosis fd ON mo.patientid = fd.patientid WHERE mo.medicationname IN ( 'venlafaxine', 'duloxetine', 'bupropion', 'mirtazapine', 'trazodone', 'amitriptyline', 'nortriptyline', 'gabapentin', 'divalproex (extended release)', 'ziprasidone hydrochloride' ) AND mo.startdatetime > fd.first_diagnosis_time GROUP BY mo.patientid ) SELECT CASE WHEN EXISTS (SELECT 1 FROM SSRIPrescriptions) THEN (SELECT most_recent_time FROM SSRIPrescriptions) WHEN EXISTS (SELECT 1 FROM OtherMDDMedications) THEN (SELECT most_recent_time FROM OtherMDDMedications) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "2100-09-15 16:00:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "12",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient data related to medication prescriptions. Specifically, you are interested in patient ID 10008287 and want to know when they were prescribed carbamazepine for epilepsy treatment after their first epilepsy diagnosis. If the patient was prescribed carbamazepine, you want to know the most recent prescription time after the first epilepsy diagnosis. If the patient was not prescribed carbamazepine, you want to identify whether any other class of medication used for epilepsy treatment was prescribed. If such medications are found, you want to know the most recent prescription time after the first epilepsy diagnosis. If no such medications are found, end the conversation. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "WITH valid_epilepsy_codes AS ( SELECT DISTINCT d.icdcode, d.codeversion, di.description FROM admissiondiagnoses d JOIN diagnosiscodes di ON d.icdcode = di.icdcode AND d.codeversion = di.codeversion WHERE di.description LIKE '%epilepsy%' ), epilepsy_diagnoses AS ( SELECT d.patientid, MIN(d.recordeddatetime) AS first_epilepsy_time FROM admissiondiagnoses d JOIN valid_epilepsy_codes c ON d.icdcode = c.icdcode AND d.codeversion = c.codeversion WHERE d.patientid = 10008287 GROUP BY d.patientid ), carbamazepine_prescriptions AS ( SELECT p.patientid, p.admissionid, p.startdatetime FROM medicationorders p JOIN epilepsy_diagnoses ed ON p.patientid = ed.patientid WHERE p.medicationname = 'carbamazepine' AND p.startdatetime > ed.first_epilepsy_time ), alternative_epilepsy_prescriptions AS ( SELECT p.patientid, p.admissionid, p.startdatetime FROM medicationorders p JOIN epilepsy_diagnoses ed ON p.patientid = ed.patientid WHERE p.medicationname IN ('levetiracetam', 'valproate', 'topiramate') AND p.startdatetime > ed.first_epilepsy_time ), combined_prescriptions AS ( SELECT patientid, admissionid, startdatetime FROM carbamazepine_prescriptions WHERE EXISTS (SELECT 1 FROM carbamazepine_prescriptions) UNION ALL SELECT patientid, admissionid, startdatetime FROM alternative_epilepsy_prescriptions WHERE NOT EXISTS (SELECT 1 FROM carbamazepine_prescriptions) ) SELECT startdatetime FROM combined_prescriptions ORDER BY startdatetime DESC LIMIT 1;",
+        "gold_answer": [
+            [
+                "2100-10-12 20:00:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "13",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient data related to medication prescriptions. Specifically, you are interested in patient ID 10016150 and want to know when they were prescribed an ACE inhibitor for hypertension management after their first hypertension diagnosis. If the patient was prescribed an ACE inhibitor, you want to know the most recent prescription time after the diagnosis. If the patient was not prescribed any ACE inhibitor, you want to identify whether any other class of antihypertensive medication was prescribed after the first hypertension diagnosis. If such medications are found, you want to know the most recent prescription time. If no such medications are found, end the conversation. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "WITH ValidHypertensionCodes AS ( SELECT DISTINCT ac.icdcode, ac.codeversion FROM admissiondiagnoses ac JOIN diagnosiscodes dc ON ac.icdcode = dc.icdcode AND ac.codeversion = dc.codeversion WHERE ( (ac.icdcode LIKE '401%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '402%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '403%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '404%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '405%' AND ac.codeversion = 9) OR (ac.icdcode LIKE 'i10%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i11%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i12%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i13%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i15%' AND ac.codeversion = 10) ) ), FirstHTNDiagnosis AS ( SELECT ad.patientid, MIN(ad.recordeddatetime) AS first_diagnosis_time FROM admissiondiagnoses ad JOIN ValidHypertensionCodes vh ON ad.icdcode = vh.icdcode AND ad.codeversion = vh.codeversion WHERE ad.patientid = 10016150 GROUP BY ad.patientid ), ACEInhibitorPrescriptions AS ( SELECT mo.patientid, MAX(mo.startdatetime) AS most_recent_time FROM medicationorders mo JOIN FirstHTNDiagnosis fd ON mo.patientid = fd.patientid WHERE ( mo.medicationname LIKE '%lisinopril%' OR mo.medicationname LIKE '%enalapril%' OR mo.medicationname LIKE '%captopril%' OR mo.medicationname LIKE '%ramipril%' OR mo.medicationname LIKE '%benazepril%' OR mo.medicationname LIKE '%fosinopril%' OR mo.medicationname LIKE '%quinapril%' ) AND mo.startdatetime > fd.first_diagnosis_time GROUP BY mo.patientid ), OtherAntihypertensives AS ( SELECT mo.patientid, MAX(mo.startdatetime) AS most_recent_time FROM medicationorders mo JOIN FirstHTNDiagnosis fd ON mo.patientid = fd.patientid WHERE ( mo.medicationname LIKE '%losartan%' OR mo.medicationname LIKE '%valsartan%' OR mo.medicationname LIKE '%irbesartan%' OR mo.medicationname LIKE '%olmesartan%' OR mo.medicationname LIKE '%candesartan%' OR mo.medicationname LIKE '%telmisartan%' OR mo.medicationname LIKE '%amlodipine%' OR mo.medicationname LIKE '%diltiazem%' OR mo.medicationname LIKE '%verapamil%' OR mo.medicationname LIKE '%nifedipine%' OR mo.medicationname LIKE '%metoprolol%' OR mo.medicationname LIKE '%atenolol%' OR mo.medicationname LIKE '%carvedilol%' OR mo.medicationname LIKE '%propranolol%' OR mo.medicationname LIKE '%bisoprolol%' OR mo.medicationname LIKE '%hydrochlorothiazide%' OR mo.medicationname LIKE '%chlorthalidone%' ) AND mo.startdatetime > fd.first_diagnosis_time GROUP BY mo.patientid ) SELECT CASE WHEN EXISTS (SELECT 1 FROM ACEInhibitorPrescriptions) THEN (SELECT most_recent_time FROM ACEInhibitorPrescriptions) WHEN EXISTS (SELECT 1 FROM OtherAntihypertensives) THEN (SELECT most_recent_time FROM OtherAntihypertensives) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "2100-05-25 08:00:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "14",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient data related to medication prescriptions. Specifically, you are interested in patient ID 10018328 and want to know when they were prescribed Lisinopril for hypertension management. If the patient was prescribed Lisinopril, you want to know the most recent prescription time after the diagnosis. If the patient was not prescribed Lisinopril, you want to identify whether any other antihypertensive medication was prescribed. If such medications are found, you want to know the most recent prescription time after the diagnosis. If no such medications are found, end the conversation. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "WITH ValidHypertensionCodes AS ( SELECT DISTINCT ac.icdcode, ac.codeversion, dc.description FROM admissiondiagnoses ac JOIN diagnosiscodes dc ON ac.icdcode = dc.icdcode AND ac.codeversion = dc.codeversion WHERE (ac.icdcode LIKE '401%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '402%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '403%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '404%' AND ac.codeversion = 9) OR (ac.icdcode LIKE '405%' AND ac.codeversion = 9) OR (ac.icdcode LIKE 'i10%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i11%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i12%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i13%' AND ac.codeversion = 10) OR (ac.icdcode LIKE 'i15%' AND ac.codeversion = 10) ), HypertensionDiagnoses AS ( SELECT ad.patientid, MIN(ad.recordeddatetime) AS first_htn_time FROM admissiondiagnoses ad JOIN ValidHypertensionCodes vh ON ad.icdcode = vh.icdcode AND ad.codeversion = vh.codeversion WHERE ad.patientid = 10018328 GROUP BY ad.patientid ), LisinoprilMeds AS ( SELECT mo.patientid, MAX(mo.startdatetime) AS most_recent_time FROM medicationorders mo JOIN HypertensionDiagnoses hd ON mo.patientid = hd.patientid AND mo.startdatetime >= hd.first_htn_time WHERE mo.medicationname = 'lisinopril' GROUP BY mo.patientid ), OtherAntihypertensiveMeds AS ( SELECT mo.patientid, MAX(mo.startdatetime) AS most_recent_time FROM medicationorders mo JOIN HypertensionDiagnoses hd ON mo.patientid = hd.patientid AND mo.startdatetime >= hd.first_htn_time WHERE mo.medicationname <> 'lisinopril' AND ( mo.medicationname LIKE '%amlodipine%' OR mo.medicationname LIKE '%losartan%' OR mo.medicationname LIKE '%valsartan%' OR mo.medicationname LIKE '%metoprolol%' OR mo.medicationname LIKE '%atenolol%' OR mo.medicationname LIKE '%carvedilol%' OR mo.medicationname LIKE '%hydrochlorothiazide%' OR mo.medicationname LIKE '%chlorthalidone%' OR mo.medicationname LIKE '%diltiazem%' OR mo.medicationname LIKE '%verapamil%' ) GROUP BY mo.patientid ), CombinedResult AS ( SELECT most_recent_time, 1 AS priority FROM LisinoprilMeds UNION ALL SELECT most_recent_time, 2 AS priority FROM OtherAntihypertensiveMeds ) SELECT most_recent_time FROM CombinedResult ORDER BY priority, most_recent_time DESC LIMIT 1;",
+        "gold_answer": [
+            [
+                "2100-05-15 08:00:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "15",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient data related to diagnoses. Specifically, you are interested in patient ID 10007818 and want to know when they were first diagnosed with Type 2 Diabetes itself, not a complication. If the exact diagnosis code for Type 2 Diabetes is found, retrieve the first diagnosis date. If it is not found, repeat the same question but with any complications related to diabetes. If neither is found, end the conversation. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "WITH type2_exact_codes AS ( SELECT DISTINCT dc.icdcode, dc.codeversion FROM diagnosiscodes dc WHERE (dc.icdcode LIKE '25000%' AND dc.codeversion = 9) OR (dc.icdcode = 'e119' AND dc.codeversion = 10) ), complication_codes AS ( SELECT DISTINCT dc.icdcode, dc.codeversion FROM diagnosiscodes dc WHERE (dc.icdcode LIKE '3572%' AND dc.codeversion = 9) OR (dc.icdcode LIKE '3620%' AND dc.codeversion = 9) OR (dc.icdcode LIKE '5833%' AND dc.codeversion = 9) OR (dc.icdcode LIKE 'e112%' AND dc.codeversion = 10) OR (dc.icdcode LIKE 'e113%' AND dc.codeversion = 10) OR (dc.icdcode LIKE 'e114%' AND dc.codeversion = 10) OR (dc.icdcode LIKE 'e115%' AND dc.codeversion = 10) OR (dc.icdcode LIKE 'e116%' AND dc.codeversion = 10) ), type2_exact_first AS ( SELECT MIN(ad.recordeddatetime) AS first_time FROM admissiondiagnoses ad JOIN type2_exact_codes c ON ad.icdcode = c.icdcode AND ad.codeversion = c.codeversion WHERE ad.patientid = 10007818 ), complication_first AS ( SELECT MIN(ad.recordeddatetime) AS first_time FROM admissiondiagnoses ad JOIN complication_codes c ON ad.icdcode = c.icdcode AND ad.codeversion = c.codeversion WHERE ad.patientid = 10007818 ) SELECT CASE WHEN (SELECT first_time FROM type2_exact_first) IS NOT NULL THEN (SELECT first_time FROM type2_exact_first) ELSE (SELECT first_time FROM complication_first) END AS first_diabetes_related_diagnosis_datetime WHERE (SELECT first_time FROM type2_exact_first) IS NOT NULL OR (SELECT first_time FROM complication_first) IS NOT NULL;",
+        "gold_answer": [
+            [
+                "2100-06-21 16:37:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "16",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient data related to post-surgical complications. Specifically, you want to identify patients who underwent partial hepatectomy and developed pulmonary embolism within 30 days after the surgery. If such patients are found, you want to know the list of patient IDs. If no patients with pulmonary embolism are found, you want to identify patients who developed any other cardiovascular complication within 30 days after the surgery. If such patients are found, you want to know the list of the complication they developed. If no such patients are found, end the conversation. You want the answer to include the exact diagnosis names as recorded in the database.",
+        "gold_sql": "WITH PartialHepatectomy AS ( SELECT ap.patientid, MIN(ap.recordeddatetime) AS surgery_time FROM admissionprocedures ap JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE pc.description = 'partial hepatectomy' GROUP BY ap.patientid ), PulmonaryEmbolismPatients AS ( SELECT DISTINCT ph.patientid FROM PartialHepatectomy ph JOIN admissiondiagnoses ad ON ph.patientid = ad.patientid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%pulmonary embolism%' AND ad.recordeddatetime > ph.surgery_time AND ad.recordeddatetime <= datetime(ph.surgery_time, '+30 days') ), OtherCardiovascularComplications AS ( SELECT DISTINCT dc.description AS complication FROM PartialHepatectomy ph JOIN admissiondiagnoses ad ON ph.patientid = ad.patientid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE ( dc.description LIKE '%atrial fibrillation%' OR dc.description LIKE '%thrombo%' OR dc.description LIKE '%arrhythmia%' OR dc.description LIKE '%heart failure%' ) AND ad.recordeddatetime > ph.surgery_time AND ad.recordeddatetime <= datetime(ph.surgery_time, '+30 days') ) SELECT CASE WHEN EXISTS (SELECT 1 FROM PulmonaryEmbolismPatients) THEN (SELECT GROUP_CONCAT(patientid) FROM PulmonaryEmbolismPatients) WHEN EXISTS (SELECT 1 FROM OtherCardiovascularComplications) THEN (SELECT GROUP_CONCAT(complication) FROM OtherCardiovascularComplications) ELSE NULL END AS answer WHERE EXISTS (SELECT 1 FROM PulmonaryEmbolismPatients) OR EXISTS (SELECT 1 FROM OtherCardiovascularComplications);",
+        "gold_answer": [
+            [
+                "atrial fibrillation"
+            ]
+        ]
+    },
+    {
+        "task_id": "17",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient data related to diagnoses. Specifically, you are interested in patient ID 10021487 and want to check if they were prescribed ipratropium alone (not in combination) as an anticholinergic bronchodilator. If prescribed, you want to identify any diagnosis within the same hospital admission that corresponds to a known anticholinergic side effect. If ipratropium alone was not prescribed, you want to check whether a beta-2 agonist bronchodilator was prescribed. If so, you want to identify any diagnosis within the same hospital admission that corresponds to a known side effect of that beta-2 agonist. If no bronchodilator was prescribed, end the conversation. You want the answer to be the exact diagnosis name recorded in the database.",
+        "gold_sql": "WITH IpratropiumPrescriptions AS ( SELECT mo.patientid, mo.admissionid FROM medicationorders mo WHERE mo.patientid = 10021487 AND mo.medicationname LIKE '%ipratropium%' AND mo.medicationname NOT LIKE '%albuterol%' ), BetaAgonistPrescriptions AS ( SELECT mo.patientid, mo.admissionid FROM medicationorders mo WHERE mo.patientid = 10021487 AND (mo.medicationname LIKE '%albuterol%' OR mo.medicationname LIKE '%levalbuterol%' OR mo.medicationname LIKE '%salmeterol%' OR mo.medicationname LIKE '%formoterol%') ), AnticholinergicSideEffects AS ( SELECT DISTINCT dc.description FROM IpratropiumPrescriptions ip JOIN admissiondiagnoses ad ON ip.admissionid = ad.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%dry mouth%' OR dc.description LIKE '%urinary retention%' OR dc.description LIKE '%constipation%' OR dc.description LIKE '%blurred vision%' OR dc.description LIKE '%glaucoma%' ), BetaAgonistSideEffects AS ( SELECT DISTINCT dc.description FROM BetaAgonistPrescriptions bp JOIN admissiondiagnoses ad ON bp.admissionid = ad.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%palpitation%' OR dc.description LIKE '%tremor%' OR dc.description LIKE '%headache%' OR dc.description LIKE '%tachycardia%' OR dc.description LIKE '%hypokalemia%' ) SELECT CASE WHEN EXISTS (SELECT 1 FROM IpratropiumPrescriptions) THEN (SELECT GROUP_CONCAT(description) FROM AnticholinergicSideEffects) WHEN EXISTS (SELECT 1 FROM BetaAgonistPrescriptions) THEN (SELECT GROUP_CONCAT(description) FROM BetaAgonistSideEffects) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "tachycardia, unspecified"
+            ]
+        ]
+    },
+    {
+        "task_id": "18",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore diagnosis-related statistics. Specifically, you want to identify patients diagnosed with psoriasis and determine whether any of them experienced a myocardial infarction, a major cardiovascular event known to be associated with psoriasis, during the same hospital admission. If such patients are found, you want to know the list of patient IDs. If no psoriasis patients with myocardial infarction are found, you want to identify whether any of them were diagnosed with other cardiometabolic comorbidities commonly associated with psoriasis during the same hospital admission. If such patients are found, you want to know the list of the comorbidities they developed. If no such patients are found, end the conversation. You want the answer to include the exact diagnosis names as recorded in the database.",
+        "gold_sql": "WITH PsoriasisPatients AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE ((dc.icdcode LIKE '696%' AND dc.codeversion = 9) OR (dc.icdcode LIKE 'l40%' AND dc.codeversion = 10)) ), PsoriasisWithMI AS ( SELECT DISTINCT pp.patientid FROM PsoriasisPatients pp JOIN admissiondiagnoses ad ON pp.admissionid = ad.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%myocardial infarction%' ), PsoriasisWithOtherCV AS ( SELECT DISTINCT dc.description AS comorbidity FROM PsoriasisPatients pp JOIN admissiondiagnoses ad ON pp.admissionid = ad.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE (dc.description LIKE '%hypertension%' OR dc.description LIKE '%coronary%' OR dc.description LIKE '%atrial fibrillation%' OR dc.description LIKE '%heart failure%' OR dc.description LIKE '%stroke%' OR dc.description LIKE '%peripheral vascular%' OR dc.description LIKE '%dyslipidemia%' OR dc.description LIKE '%hyperlipidemia%' OR dc.description LIKE '%obesity%' OR dc.description LIKE '%metabolic syndrome%' OR dc.description LIKE '%diabetes%') AND dc.description NOT LIKE '%myocardial infarction%' ) SELECT CASE WHEN EXISTS (SELECT 1 FROM PsoriasisWithMI) THEN (SELECT GROUP_CONCAT(patientid) FROM PsoriasisWithMI) WHEN EXISTS (SELECT 1 FROM PsoriasisWithOtherCV) THEN (SELECT GROUP_CONCAT(comorbidity) FROM PsoriasisWithOtherCV) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "unspecified essential hypertension,other and unspecified hyperlipidemia,essential (primary) hypertension"
+            ]
+        ]
+    },
+    {
+        "task_id": "19",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to find the highest lab value recorded during a visit. Specifically, you are interested in patient ID 10029291. Check if the patient was admitted for liver cirrhosis. If found, retrieve the highest total bilirubin level recorded during the same hospital stay. If not found, check for any neurological complications arising from the accumulation of toxins due to liver dysfunction. If such a complication is found, retrieve the highest total bilirubin level recorded during the same hospital stay. If neither is found, end the conversation.",
+        "gold_sql": "WITH liver_cirrhosis_codes AS ( SELECT DISTINCT dc.icdcode, dc.codeversion FROM diagnosiscodes dc WHERE (dc.icdcode LIKE '5712%' AND dc.codeversion = 9) OR (dc.icdcode LIKE '5715%' AND dc.codeversion = 9) OR (dc.icdcode LIKE '5716%' AND dc.codeversion = 9) OR (dc.icdcode LIKE 'k74%' AND dc.codeversion = 10) ), neuro_complication_codes AS ( SELECT DISTINCT dc.icdcode, dc.codeversion FROM diagnosiscodes dc WHERE (dc.icdcode LIKE '5722%' AND dc.codeversion = 9) OR (dc.icdcode LIKE 'k72%' AND dc.codeversion = 10) ), liver_cirrhosis_admissions AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN liver_cirrhosis_codes c ON ad.icdcode = c.icdcode AND ad.codeversion = c.codeversion WHERE ad.patientid = 10029291 ), neuro_comp_admissions AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN neuro_complication_codes c ON ad.icdcode = c.icdcode AND ad.codeversion = c.codeversion WHERE ad.patientid = 10029291 ), target_admissions AS ( SELECT patientid, admissionid FROM liver_cirrhosis_admissions UNION ALL SELECT patientid, admissionid FROM neuro_comp_admissions WHERE NOT EXISTS (SELECT 1 FROM liver_cirrhosis_admissions) ) SELECT MAX(lr.resultvalue) AS highest_total_bilirubin FROM labresults lr JOIN labtesttypes lt ON lr.itemcode = lt.itemcode JOIN target_admissions ta ON lr.patientid = ta.patientid AND lr.admissionid = ta.admissionid WHERE lt.itemname = 'bilirubin, total';",
+        "gold_answer": [
+            [
+                2.5
+            ]
+        ]
+    },
+    {
+        "task_id": "20",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the most recent troponin I level for patient ID 10029291 to assess their myocardial damage status. If troponin I levels are available, you want to retrieve the most recent troponin I record. If troponin I levels are not available, you want to identify other lab records used for myocardial damage assessment. If those other lab records include troponin T, you want only the most recent troponin T level. If those records do not include troponin T, end the conversation. You do not know which myocardial damage-related lab tests are stored in the database, so do not suggest troponin T unless the DB agent mentions it first.",
+        "gold_sql": "WITH TroponinICheck AS ( SELECT l.resultvalue FROM labresults l JOIN labtesttypes d ON l.itemcode = d.itemcode WHERE l.patientid = 10029291 AND d.itemname = 'troponin i' ORDER BY l.resultdatetime DESC LIMIT 1 ), TroponinTCheck AS ( SELECT l.resultvalue FROM labresults l JOIN labtesttypes d ON l.itemcode = d.itemcode WHERE l.patientid = 10029291 AND d.itemname = 'troponin t' ORDER BY l.resultdatetime DESC LIMIT 1 ) SELECT CASE WHEN EXISTS (SELECT 1 FROM TroponinICheck) THEN (SELECT resultvalue FROM TroponinICheck) ELSE (SELECT resultvalue FROM TroponinTCheck) END AS lab_result;",
+        "gold_answer": [
+            [
+                0.23
+            ]
+        ]
+    },
+    {
+        "task_id": "21",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the number of patients with BNP levels \u2265400 pg/mL for heart failure-related research. If there are patients with BNP levels \u2265400 pg/mL, you want to know the number of such patients. If no such patients are found, you want to identify other lab records used for heart failure testing. If those other lab records include NT-proBNP, you want to know the number of patients with NT-proBNP levels \u22651800 pg/mL. If NT-proBNP records are not included, end the conversation. You do not know which heart failure-related lab tests are stored in the database, so do not suggest NT-proBNP unless the DB agent mentions it first. You want the number of patients reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three).",
+        "gold_sql": "WITH BNPPatients AS ( SELECT COUNT(DISTINCT lr.patientid) AS patient_count FROM labresults lr JOIN labtesttypes ltt ON lr.itemcode = ltt.itemcode WHERE ltt.itemname = 'bnp' AND lr.resultvalue >= 400 ), NTproBNPPatients AS ( SELECT COUNT(DISTINCT lr.patientid) AS patient_count FROM labresults lr JOIN labtesttypes ltt ON lr.itemcode = ltt.itemcode WHERE ltt.itemname = 'ntprobnp' AND lr.resultvalue >= 1800 ) SELECT CASE WHEN (SELECT patient_count FROM BNPPatients) > 0 THEN (SELECT patient_count FROM BNPPatients) ELSE (SELECT patient_count FROM NTproBNPPatients) END AS patient_count;",
+        "gold_answer": [
+            [
+                "two"
+            ]
+        ]
+    },
+    {
+        "task_id": "22",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the CRP levels for patient ID 10004733 taken more than 24 hours after their latest Aspirin prescription during their current hospital admission (no discharge records) to assess their inflammatory status. If the patient's current hospital admission records after the latest Aspirin prescription contain CRP levels, you want to retrieve all CRP levels taken more than 24 hours after the latest Aspirin prescription. If the patient\u2019s hospital admission records after the latest Aspirin prescription do not contain CRP levels, you want to identify other lab records used to assess inflammatory status more than 24 hours after the latest Aspirin prescription. If those other lab records include WBC counts, you want to know all the WBC counts taken more than 24 hours after the latest Aspirin prescription. If those records do not include WBC, end the conversation. You do not know which inflammatory status-related lab tests are stored in the database, so do not suggest WBC unless the DB agent mentions it first.",
+        "gold_sql": "WITH LastAspirinTime AS ( SELECT MAX(startdatetime) AS last_aspirin_time FROM medicationorders WHERE medicationname LIKE '%aspirin%' AND admissionid = (SELECT admissionid FROM hospitaladmissions WHERE patientid = 10004733 AND dischargedatetime IS NULL) ), CRPLevels AS ( SELECT lr.resultvalue AS crp_value, lr.resultdatetime FROM labresults lr JOIN labtesttypes ltt ON lr.itemcode = ltt.itemcode JOIN LastAspirinTime lat ON lr.resultdatetime > lat.last_aspirin_time WHERE lr.patientid = 10004733 AND ltt.itemname = 'c-reactive protein' AND datetime(lr.resultdatetime) > datetime(lat.last_aspirin_time, '+24 hours') ), WBCLevels AS ( SELECT lr.resultvalue AS wbc_value, lr.resultdatetime FROM labresults lr JOIN labtesttypes ltt ON lr.itemcode = ltt.itemcode JOIN LastAspirinTime lat ON lr.resultdatetime > lat.last_aspirin_time WHERE lr.patientid = 10004733 AND ltt.itemname IN ('wbc', 'white blood cells', 'wbc count', 'leukocytes') AND datetime(lr.resultdatetime) > datetime(lat.last_aspirin_time, '+24 hours') ), CombinedResults AS ( SELECT crp_value AS result_value, resultdatetime FROM CRPLevels WHERE EXISTS (SELECT 1 FROM CRPLevels) UNION ALL SELECT wbc_value AS result_value, resultdatetime FROM WBCLevels WHERE NOT EXISTS (SELECT 1 FROM CRPLevels) ) SELECT result_value FROM CombinedResults ORDER BY resultdatetime;",
+        "gold_answer": [
+            [
+                10.2
+            ],
+            [
+                8.0
+            ],
+            [
+                4.0
+            ],
+            [
+                8.8
+            ],
+            [
+                7.0
+            ]
+        ]
+    },
+    {
+        "task_id": "23",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the latest ALT level for patient ID 10009049 to know their liver function status following the earliest severe sepsis diagnosis recorded during their most recent hospital admission. You want to search for diagnoses that include the word \"severe sepsis\" in their names. If the hospital admission records contain an ALT level after the severe sepsis diagnosis, you want to know the latest ALT level within that admission. If not, you want to identify other lab records used to assess liver function status after the severe sepsis diagnosis within the same admission. If those other lab records include AST, you want only the latest AST level. If those records do not include AST, end the conversation. You do not know which liver function-related lab tests are stored in the database, so do not suggest AST unless the DB agent mentions it first.",
+        "gold_sql": "WITH PatientStay AS ( SELECT admissionid FROM hospitaladmissions WHERE patientid = 10009049 ORDER BY admitdatetime DESC LIMIT 1 ), FirstSepsisDiagnosis AS ( SELECT ad.patientid, ad.admissionid, MIN(ad.recordeddatetime) AS diag_time FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%severe sepsis%' AND ad.admissionid = (SELECT admissionid FROM PatientStay) GROUP BY ad.patientid, ad.admissionid ), LastALT AS ( SELECT lr.resultvalue AS labresult, lr.resultdatetime FROM labresults lr JOIN labtesttypes lt ON lr.itemcode = lt.itemcode JOIN FirstSepsisDiagnosis fsd ON lr.patientid = fsd.patientid AND lr.admissionid = fsd.admissionid WHERE lr.patientid = 10009049 AND lt.itemname LIKE '%alanine aminotransferase%' AND lr.resultdatetime >= fsd.diag_time ORDER BY lr.resultdatetime DESC LIMIT 1 ), LastAST AS ( SELECT lr.resultvalue AS labresult, lr.resultdatetime FROM labresults lr JOIN labtesttypes lt ON lr.itemcode = lt.itemcode JOIN FirstSepsisDiagnosis fsd ON lr.patientid = fsd.patientid AND lr.admissionid = fsd.admissionid WHERE lr.patientid = 10009049 AND lt.itemname LIKE '%asparate aminotransferase%' AND lr.resultdatetime >= fsd.diag_time ORDER BY lr.resultdatetime DESC LIMIT 1 ) SELECT CASE WHEN EXISTS (SELECT 1 FROM LastALT) THEN (SELECT labresult FROM LastALT) ELSE (SELECT labresult FROM LastAST) END AS lab_result;",
+        "gold_answer": [
+            [
+                22.0
+            ]
+        ]
+    },
+    {
+        "task_id": "24",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore information regarding patient lab tests. Specifically, you want to find the latest Procalcitonin level for patient ID 10015860 for a suspected bacterial infection analysis. If Procalcitonin levels are available, you want to retrieve the latest record. If Procalcitonin levels are not available, you want to identify other lab records used to assess sepsis severity. If those other lab records include Lactic Acid, you want only the latest Lactic Acid level. If those records do not include Lactic Acid, end the conversation. You do not know which sepsis-related lab tests are stored in the database, so do not suggest Lactic Acid unless the DB agent mentions it first.",
+        "gold_sql": "WITH procalcitonin_labs AS ( SELECT lr.patientid, lr.admissionid, lr.resultdatetime, lr.resultvalue FROM labresults lr JOIN labtesttypes lt ON lr.itemcode = lt.itemcode WHERE lr.patientid = 10015860 AND lt.itemname = 'procalcitonin' ), latest_procalcitonin AS ( SELECT patientid, admissionid, resultdatetime, resultvalue FROM procalcitonin_labs ORDER BY resultdatetime DESC LIMIT 1 ), lactic_acid_labs AS ( SELECT lr.patientid, lr.admissionid, lr.resultdatetime, lr.resultvalue FROM labresults lr JOIN labtesttypes lt ON lr.itemcode = lt.itemcode WHERE lr.patientid = 10015860 AND lt.itemname = 'lactate' ), latest_lactic_acid AS ( SELECT patientid, admissionid, resultdatetime, resultvalue FROM lactic_acid_labs ORDER BY resultdatetime DESC LIMIT 1 ), selected_lab AS ( SELECT patientid, admissionid, resultdatetime, resultvalue, 'procalcitonin' AS labtestname FROM latest_procalcitonin WHERE EXISTS (SELECT 1 FROM latest_procalcitonin) UNION ALL SELECT patientid, admissionid, resultdatetime, resultvalue, 'lactate' AS labtestname FROM latest_lactic_acid WHERE NOT EXISTS (SELECT 1 FROM latest_procalcitonin) ) SELECT resultvalue FROM selected_lab;",
+        "gold_answer": [
+            [
+                0.7
+            ]
+        ]
+    },
+    {
+        "task_id": "25",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to patient procedures. Specifically, you want to identify patients diagnosed with breast cancer. If no patients have been diagnosed with breast cancer, end the conversation. If such patients exist, you ultimately want to know the number of patients who received specific surgeries for breast cancer. If there are patients diagnosed with breast cancer who received a lumpectomy during the same hospital admission, you want to know the number of those patients. If no patients diagnosed with breast cancer received a lumpectomy during the same hospital admission, you want to know the number of patients who received any other type of breast removal surgery during the same hospital admission. You want the answer to be based on the exact procedure name recorded in the database.",
+        "gold_sql": "WITH BreastCancerPatients AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE (dc.icdcode LIKE 'c50%' AND dc.codeversion = 10) OR (dc.icdcode LIKE '174%' AND dc.codeversion = 9) OR (dc.icdcode LIKE '175%' AND dc.codeversion = 9) ), LumpectomyPatientCount AS ( SELECT COUNT(DISTINCT bcp.patientid) AS patient_count FROM BreastCancerPatients bcp JOIN admissionprocedures ap ON bcp.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE pc.description LIKE '%lumpectomy%' ), OtherBreastSurgeryCount AS ( SELECT COUNT(DISTINCT bcp.patientid) AS patient_count FROM BreastCancerPatients bcp JOIN admissionprocedures ap ON bcp.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE pc.description LIKE '%mastectomy%' OR pc.description LIKE '%breast removal%' ) SELECT CASE WHEN (SELECT patient_count FROM LumpectomyPatientCount) > 0 THEN (SELECT patient_count FROM LumpectomyPatientCount) ELSE (SELECT patient_count FROM OtherBreastSurgeryCount) END AS result_patient_count WHERE (SELECT patient_count FROM LumpectomyPatientCount) > 0 OR (SELECT patient_count FROM OtherBreastSurgeryCount) > 0;",
+        "gold_answer": [
+            [
+                "one"
+            ]
+        ]
+    },
+    {
+        "task_id": "26",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to patient procedures. Specifically, you want to identify patients diagnosed with CKD, including those diagnosed with CKD with complications. If no patients have been diagnosed with CKD, end the conversation. If such patients exist, you want to know the number of CKD patients who received a kidney transplantation during the same hospital admission. If no CKD patients underwent kidney transplantation during the same hospital admission, you want to know what other surgery or procedure was most commonly performed as a direct treatment for CKD during the same hospital admission, based on the number of distinct patients. You want the answers to be based on the exact procedure names recorded in the database.",
+        "gold_sql": "WITH CKDPatients AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE (dc.icdcode LIKE '585%' AND dc.codeversion = 9) OR (dc.icdcode LIKE '403%' AND dc.codeversion = 9) OR (dc.icdcode = '28521' AND dc.codeversion = 9) OR (dc.icdcode LIKE 'n18%' AND dc.codeversion = 10) OR (dc.icdcode = 'e1022' AND dc.codeversion = 10) OR (dc.icdcode = 'e1122' AND dc.codeversion = 10) OR (dc.icdcode = 'e1322' AND dc.codeversion = 10) OR (dc.icdcode = 'i129' AND dc.codeversion = 10) OR (dc.icdcode = 'i130' AND dc.codeversion = 10) OR (dc.icdcode = 'i131' AND dc.codeversion = 10) OR (dc.icdcode = 'i132' AND dc.codeversion = 10) ), KidneyTransplantCount AS ( SELECT COUNT(DISTINCT ckd.patientid) AS patient_count FROM CKDPatients ckd JOIN admissionprocedures ap ON ckd.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE pc.description LIKE '%kidney transplant%' ), OtherCKDProcedures AS ( SELECT pc.description, COUNT(DISTINCT ckd.patientid) AS patient_count, DENSE_RANK() OVER ( ORDER BY COUNT(DISTINCT ckd.patientid) DESC ) AS rank FROM CKDPatients ckd JOIN admissionprocedures ap ON ckd.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE pc.description NOT LIKE '%kidney transplant%' AND (pc.description LIKE '%dialysis%' OR pc.description LIKE '%fistula%' OR pc.description LIKE '%catheter%vascular%') GROUP BY pc.description ) SELECT patient_count FROM KidneyTransplantCount WHERE patient_count > 0 UNION ALL SELECT description FROM OtherCKDProcedures WHERE NOT EXISTS (SELECT 1 FROM KidneyTransplantCount WHERE patient_count > 0) AND rank = 1;",
+        "gold_answer": [
+            [
+                "hemodialysis"
+            ]
+        ]
+    },
+    {
+        "task_id": "27",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore data related to patient procedures. Specifically, you are interested in patient ID 10003046. If this patient received EMR for esophageal cancer treatment during the same hospital admission, you want to know when the procedure was performed. You want the results to be based on the exact time format as recorded in the database. If this patient did not receive EMR to treat esophageal cancer during the same hospital admission, you want to know what other procedure or surgery was performed as a direct treatment for it. You want the answers to be based on the exact procedure names recorded in the database.",
+        "gold_sql": "WITH EsophagealCancerPatient AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE ad.patientid = 10003046 AND ((dc.icdcode LIKE '150%' AND dc.codeversion = 9) OR (dc.icdcode LIKE 'C15%' AND dc.codeversion = 10)) ), EMRProcedures AS ( SELECT ecp.patientid, ecp.admissionid, ap.recordeddatetime FROM EsophagealCancerPatient ecp JOIN admissionprocedures ap ON ecp.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE pc.description LIKE '%endoscopic mucosal resection%' OR pc.description LIKE '%endoscopic resection%esophagus%' OR pc.description LIKE '%endoscopic excision%esophagus%' ), OtherProcedures AS ( SELECT DISTINCT ecp.patientid, ecp.admissionid, pc.description FROM EsophagealCancerPatient ecp JOIN admissionprocedures ap ON ecp.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE (pc.description LIKE '%esophagectomy%' OR pc.description LIKE '%stent%esophagus%' OR pc.description LIKE '%catheter%chemotherapy%' OR pc.description LIKE '%dilation%esophagus%') ) SELECT recordeddatetime FROM EMRProcedures WHERE EXISTS (SELECT 1 FROM EMRProcedures) UNION ALL SELECT description FROM OtherProcedures WHERE NOT EXISTS (SELECT 1 FROM EMRProcedures);",
+        "gold_answer": [
+            [
+                "total esophagectomy"
+            ]
+        ]
+    },
+    {
+        "task_id": "28",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient procedure-related data. Specifically, you are interested in patient ID 10004457. If this patient received CABG for coronary atherosclerosis treatment during the same hospital admission, you want to know when the procedure was performed. You want the answer in the exact time format recorded in the database. If this patient did not receive CABG for coronary atherosclerosis treatment during the same hospital admission, you want to know other procedures or surgeries performed for their treatment. If PTCA is included in that list, you ultimately want to know the full list of patients who received PTCA. If PTCA is not included in those records, end the conversation. You do not know which related procedures or surgeries are stored in the database, so do not suggest PTCA unless the DB agent mentions it first.",
+        "gold_sql": "WITH CoronaryAtherosclerosisPatient AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE ad.patientid = 10004457 AND dc.description LIKE '%coronary atherosclerosis%' ), CABGProcedure AS ( SELECT cap.patientid, cap.admissionid, ap.recordeddatetime FROM CoronaryAtherosclerosisPatient cap JOIN admissionprocedures ap ON cap.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE pc.description LIKE '%coronary bypass%' ), OtherProcedures AS ( SELECT DISTINCT cap.patientid, cap.admissionid, pc.description FROM CoronaryAtherosclerosisPatient cap JOIN admissionprocedures ap ON cap.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE ( pc.description LIKE '%percutaneous%transluminal%coronary%angioplasty%' OR pc.description LIKE '%percutaneous%coronary%intervention%' OR pc.description LIKE '%angioplasty%' OR pc.description LIKE '%atherectomy%' ) AND pc.description NOT LIKE '%coronary bypass%' ), PTCAPatients AS ( SELECT DISTINCT ad.patientid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion JOIN admissionprocedures ap ON ad.admissionid = ap.admissionid JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE dc.description LIKE '%coronary atherosclerosis%' AND pc.description LIKE '%percutaneous transluminal coronary angioplasty%' ) SELECT CAST(recordeddatetime AS TEXT) AS result FROM CABGProcedure WHERE EXISTS (SELECT 1 FROM CABGProcedure) UNION ALL SELECT patientid AS result FROM PTCAPatients WHERE NOT EXISTS (SELECT 1 FROM CABGProcedure) AND EXISTS ( SELECT 1 FROM OtherProcedures WHERE description LIKE '%percutaneous transluminal coronary angioplasty%' );",
+        "gold_answer": [
+            [
+                10004457
+            ]
+        ]
+    },
+    {
+        "task_id": "29",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore data related to patient procedures. Specifically, you are interested in patient ID 10036156. If this patient received an endoscopic clipping for a peptic ulcer bleed during the same hospital admission, you want to know when the procedure was performed. If this patient did not receive endoscopic clipping for the bleed during the same hospital admission, you want to know if a radiological intervention to block the bleeding vessel was performed. If such a radiological intervention is found, you want to know when it was performed.",
+        "gold_sql": "WITH PepticUlcerAdmissions AS ( SELECT DISTINCT ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE ad.patientid = 10036156 AND ((dc.icdcode LIKE '531%' AND dc.codeversion = 9) OR (dc.icdcode LIKE '532%' AND dc.codeversion = 9) OR (dc.icdcode LIKE 'k25%' AND dc.codeversion = 10) OR (dc.icdcode LIKE 'k26%' AND dc.codeversion = 10)) ), EndoscopicClipping AS ( SELECT ap.recordeddatetime FROM admissionprocedures ap JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE ap.admissionid IN (SELECT admissionid FROM PepticUlcerAdmissions) AND pc.description = 'endoscopic control of gastric or duodenal bleeding' ), AngiographicEmbolization AS ( SELECT ap.recordeddatetime FROM admissionprocedures ap JOIN procedurecodes pc ON ap.icdcode = pc.icdcode AND ap.codeversion = pc.codeversion WHERE ap.admissionid IN (SELECT admissionid FROM PepticUlcerAdmissions) AND pc.description = 'transcatheter embolization for gastric or duodenal bleeding' ) SELECT recordeddatetime AS procedure_time FROM EndoscopicClipping WHERE EXISTS (SELECT 1 FROM EndoscopicClipping) UNION ALL SELECT recordeddatetime AS procedure_time FROM AngiographicEmbolization WHERE NOT EXISTS (SELECT 1 FROM EndoscopicClipping);",
+        "gold_answer": [
+            [
+                "2100-07-17 15:08:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "30",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to find the number of patients who may be eligible for a clinical study on drug-induced GI bleeding. You want to include patients who meet both of the inclusion criteria listed below: 1. Patients diagnosed with GI bleeding during a hospital admission 2. Patients who were prescribed warfarin, a vitamin K antagonist, during the same hospital admission If no patients meet the above criteria, you want to modify inclusion criterion 2 to: patients who were prescribed any other class of medication known to increase bleeding risk during the same hospital admission. If still no patients are found, end the conversation. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH GIBleedingPatients AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE ( dc.codeversion = 9 AND ( dc.icdcode IN ('5780','5781','5789','53140','53240','56212') OR dc.icdcode LIKE '5340%' OR dc.icdcode = '4560' ) ) OR ( dc.codeversion = 10 AND ( dc.icdcode LIKE 'k922%' OR dc.icdcode IN ('k250','k260','k270','k280','k2901','i8511') ) ) ), WarfarinGIBleeding AS ( SELECT COUNT(DISTINCT gbp.patientid) AS patient_count FROM GIBleedingPatients gbp JOIN medicationorders mo ON gbp.admissionid = mo.admissionid WHERE mo.medicationname LIKE '%warfarin%' ), OtherBleedingRiskGIBleeding AS ( SELECT COUNT(DISTINCT gbp.patientid) AS patient_count FROM GIBleedingPatients gbp JOIN medicationorders mo ON gbp.admissionid = mo.admissionid WHERE (mo.medicationname LIKE '%aspirin%' OR mo.medicationname LIKE '%clopidogrel%' OR mo.medicationname LIKE '%heparin%' OR mo.medicationname LIKE '%enoxaparin%' OR mo.medicationname LIKE '%apixaban%' OR mo.medicationname LIKE '%rivaroxaban%' OR mo.medicationname LIKE '%ibuprofen%' OR mo.medicationname LIKE '%naproxen%' OR mo.medicationname LIKE '%ketorolac%') AND mo.medicationname NOT LIKE '%warfarin%' ) SELECT CASE WHEN (SELECT patient_count FROM WarfarinGIBleeding) > 0 THEN (SELECT patient_count FROM WarfarinGIBleeding) WHEN (SELECT patient_count FROM OtherBleedingRiskGIBleeding) > 0 THEN (SELECT patient_count FROM OtherBleedingRiskGIBleeding) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "five"
+            ]
+        ]
+    },
+    {
+        "task_id": "31",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to find the number of patients who may be eligible for a clinical study on comorbidity burden in chronic kidney disease. You want to include patients who meet both of the inclusion criteria listed below during the same hospital admission: 1. Patients diagnosed with chronic kidney disease 2. Patients diagnosed with aortic aneurysm You want different variations of the same diagnosis treated as a single diagnosis (e.g., stage III CKD and stage V CKD should both be treated as chronic kidney disease). You want to identify conditions only when they are the main diagnosis, and exclude diagnosis names that appear only as the cause of another diagnosis (e.g., exclude '... due to chronic kidney disease'). If no patients meet the above criteria, you want to modify inclusion criterion 2 to: patients diagnosed with any other major comorbidity commonly associated with chronic kidney disease. If still no patients are found, end the conversation. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH CKDAdmissions AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%chronic kidney disease%' AND dc.description NOT LIKE '%due to%' ), CKDWithAorticAneurysm AS ( SELECT COUNT(DISTINCT ckd.patientid) AS patient_count FROM CKDAdmissions ckd JOIN admissiondiagnoses ad ON ckd.admissionid = ad.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%aortic aneurysm%' ), CKDWithOtherComorbidity AS ( SELECT COUNT(DISTINCT ckd.patientid) AS patient_count FROM CKDAdmissions ckd JOIN admissiondiagnoses ad ON ckd.admissionid = ad.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE (dc.description LIKE '%type 2 diabetes mellitus%' OR dc.description LIKE '%heart failure%' OR dc.description LIKE '%angina pectoris%' OR dc.description LIKE '%myocardial infarction%' OR dc.description LIKE '%atrial fibrillation%' OR dc.description LIKE '%coronary%' OR dc.description LIKE '%cerebral infarction%' OR dc.description LIKE '%stroke%' OR dc.description LIKE '%peripheral vascular%' OR dc.description LIKE '%peripheral artery%' OR dc.description LIKE '%hyperlipidemia%' OR dc.description LIKE '%dyslipidemia%') AND dc.description NOT LIKE '%aortic aneurysm%' ) SELECT CASE WHEN (SELECT patient_count FROM CKDWithAorticAneurysm) > 0 THEN (SELECT patient_count FROM CKDWithAorticAneurysm) WHEN (SELECT patient_count FROM CKDWithOtherComorbidity) > 0 THEN (SELECT patient_count FROM CKDWithOtherComorbidity) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "sixteen"
+            ]
+        ]
+    },
+    {
+        "task_id": "32",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to find the number of patients who may be eligible for a clinical study on sepsis-induced coagulopathy. You want to include patients who meet all of the inclusion criteria and do not meet any of the exclusion criteria listed below during the same hospital admission. Inclusion Criteria: 1. Breathing rate greater than 20 breaths per minute 2. Arterial systolic blood pressure less than 90 mmHg 3. At least one of the following: - Heart rate greater than 100 beats per minute - Abnormal body temperature (greater than 38\u00b0C or less than 36\u00b0C) 4. Diagnosed with disseminated intravascular coagulation (DIC) Exclusion Criteria: 1. Chronic lung disease: Diagnosed with COPD or interstitial lung disease 2. Heart failure: Diagnosed with congestive or chronic heart failure 3. Age less than 18 years If no patients meet the above criteria, you want to modify inclusion criterion 4 to: patients diagnosed with any other organ dysfunction commonly associated with sepsis. If still no patients are found, end the conversation. If certain conditions are missing from the database, you may ignore them. If the database contains age information at the time of hospital admission, you want to use that information directly without calculating age. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH InclusionRR AS ( SELECT DISTINCT ce.patientid, ce.admissionid FROM clinicalevents ce JOIN clinicalitemtypes cit ON ce.itemcode = cit.itemcode WHERE cit.itemname = 'respiratory rate' AND ce.value > 20 ), InclusionSBP AS ( SELECT DISTINCT ce.patientid, ce.admissionid FROM clinicalevents ce JOIN clinicalitemtypes cit ON ce.itemcode = cit.itemcode WHERE cit.itemname = 'arterial blood pressure systolic' AND ce.value < 90 ), InclusionHR AS ( SELECT DISTINCT ce.patientid, ce.admissionid FROM clinicalevents ce JOIN clinicalitemtypes cit ON ce.itemcode = cit.itemcode WHERE cit.itemname = 'heart rate' AND ce.value > 100 ), InclusionTemp AS ( SELECT DISTINCT ce.patientid, ce.admissionid FROM clinicalevents ce JOIN clinicalitemtypes cit ON ce.itemcode = cit.itemcode WHERE cit.itemname = 'temperature celsius' AND (ce.value > 38 OR ce.value < 36) ), HemodynamicPatients AS ( SELECT DISTINCT rr.patientid, rr.admissionid FROM InclusionRR rr JOIN InclusionSBP sbp ON rr.admissionid = sbp.admissionid WHERE EXISTS ( SELECT 1 FROM InclusionHR hr WHERE hr.admissionid = rr.admissionid UNION SELECT 1 FROM InclusionTemp temp WHERE temp.admissionid = rr.admissionid ) ), ExclusionLungDisease AS ( SELECT DISTINCT ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%chronic obstructive pulmonary%' OR dc.description LIKE '%obstructive chronic bronchitis%' OR dc.description LIKE '%chronic airway obstruction%' OR dc.description LIKE '%interstitial lung disease%' ), ExclusionHeartFailure AS ( SELECT DISTINCT ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%heart failure%' AND (dc.description LIKE '%congestive%' OR dc.description LIKE '%chronic%') ), ExclusionAge AS ( SELECT DISTINCT admissionid FROM hospitaladmissions WHERE age < 18 ), EligiblePatients AS ( SELECT DISTINCT hp.patientid, hp.admissionid FROM HemodynamicPatients hp WHERE hp.admissionid NOT IN (SELECT admissionid FROM ExclusionLungDisease) AND hp.admissionid NOT IN (SELECT admissionid FROM ExclusionHeartFailure) AND hp.admissionid NOT IN (SELECT admissionid FROM ExclusionAge) ), EligibleWithDIC AS ( SELECT COUNT(DISTINCT ep.patientid) AS patient_count FROM EligiblePatients ep JOIN admissiondiagnoses ad ON ep.admissionid = ad.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE dc.description LIKE '%disseminated intravascular%' ), EligibleWithOtherOrganDysfunction AS ( SELECT COUNT(DISTINCT ep.patientid) AS patient_count FROM EligiblePatients ep JOIN admissiondiagnoses ad ON ep.admissionid = ad.admissionid JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion WHERE ( dc.description LIKE '%septic shock%' OR dc.description LIKE '%sepsis%' OR dc.description LIKE '%acute kidney%' OR dc.description LIKE '%acute respiratory distress%' OR dc.description LIKE '%organ failure%' OR dc.description LIKE '%lactic acidosis%') AND dc.description NOT LIKE '%disseminated intravascular%' ) SELECT CASE WHEN (SELECT patient_count FROM EligibleWithDIC) > 0 THEN (SELECT patient_count FROM EligibleWithDIC) WHEN (SELECT patient_count FROM EligibleWithOtherOrganDysfunction) > 0 THEN (SELECT patient_count FROM EligibleWithOtherOrganDysfunction) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "three"
+            ]
+        ]
+    },
+    {
+        "task_id": "33",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to find the number of patients who may be eligible for a clinical study on coagulopathy reversal strategies in critically ill patients requiring red blood cell transfusion. You want to include patients who meet all of the inclusion criteria listed below during the same hospital admission: Inclusion Criteria: 1. Received a blood transfusion (Packed Red Blood Cells or whole blood) 2. At least two of the following laboratory abnormalities: - INR greater than 1.5 - Platelet count less than 150,000/\u03bcL - Hemoglobin less than 10 g/dL 3. Administered prothrombin complex concentrate (PCC) as a coagulopathy reversal agent If no patients meet all of the above criteria, you want to modify inclusion criterion 3 to: patients who received any other pharmacological or blood product-based agent commonly used for coagulopathy reversal in critically ill patients. If still no patients are found, end the conversation. If certain laboratory tests are not available in the database, you should still require at least two abnormalities among the tests that are available. Do not confuse the use of 'and' and 'or' when describing the conditions. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH TransfusedAdmissions AS ( SELECT DISTINCT ir.patientid, ir.admissionid FROM intakerecords ir JOIN clinicalitemtypes cit ON ir.itemcode = cit.itemcode WHERE cit.itemname IN ('packed red blood cells', 'packed red cells', 'whole blood') ), AbnormalINR AS ( SELECT DISTINCT lr.patientid, lr.admissionid FROM labresults lr JOIN labtesttypes ltt ON lr.itemcode = ltt.itemcode WHERE ltt.itemname LIKE '%inr%' AND lr.resultvalue > 1.5 ), LowPlatelets AS ( SELECT DISTINCT lr.patientid, lr.admissionid FROM labresults lr JOIN labtesttypes ltt ON lr.itemcode = ltt.itemcode WHERE ltt.itemname LIKE '%platelet%' AND ( (lr.resultunit = 'k/ul' AND lr.resultvalue < 150) OR (lr.resultunit = 'ul' AND lr.resultvalue < 150000)) ), LowHemoglobin AS ( SELECT DISTINCT lr.patientid, lr.admissionid FROM labresults lr JOIN labtesttypes ltt ON lr.itemcode = ltt.itemcode WHERE ltt.itemname = 'hemoglobin' AND ( (lr.resultunit = 'g/dl' AND lr.resultvalue < 10) OR (lr.resultunit = 'g/l' AND lr.resultvalue < 100)) ), EligiblePatients AS ( SELECT DISTINCT ta.patientid, ta.admissionid FROM TransfusedAdmissions ta WHERE (CASE WHEN EXISTS (SELECT 1 FROM AbnormalINR i WHERE i.admissionid = ta.admissionid) THEN 1 ELSE 0 END) + (CASE WHEN EXISTS (SELECT 1 FROM LowPlatelets p WHERE p.admissionid = ta.admissionid) THEN 1 ELSE 0 END) + (CASE WHEN EXISTS (SELECT 1 FROM LowHemoglobin h WHERE h.admissionid = ta.admissionid) THEN 1 ELSE 0 END) >= 2 ), EligibleWithPCC AS ( SELECT COUNT(DISTINCT ep.patientid) AS patient_count FROM EligiblePatients ep WHERE EXISTS ( SELECT 1 FROM medicationorders mo WHERE mo.admissionid = ep.admissionid AND ( mo.medicationname LIKE '%prothrombin complex%' OR mo.medicationname LIKE '%kcentra%' OR mo.medicationname LIKE '%bebulin%' OR mo.medicationname LIKE '%profilnine%')) ), EligibleWithOtherReversal AS ( SELECT COUNT(DISTINCT ep.patientid) AS patient_count FROM EligiblePatients ep WHERE EXISTS ( SELECT 1 FROM medicationorders mo WHERE mo.admissionid = ep.admissionid AND ( mo.medicationname LIKE '%phytonadione%' OR mo.medicationname LIKE '%vitamin k%' OR mo.medicationname LIKE '%desmopressin%' OR mo.medicationname LIKE '%protamine%' OR mo.medicationname LIKE '%tranexamic%' OR mo.medicationname LIKE '%aminocaproic%') AND mo.medicationname NOT LIKE '%prothrombin complex%' AND mo.medicationname NOT LIKE '%kcentra%') OR EXISTS ( SELECT 1 FROM intakerecords ir JOIN clinicalitemtypes cit ON ir.itemcode = cit.itemcode WHERE ir.admissionid = ep.admissionid AND ( cit.itemname LIKE '%fresh frozen plasma%' OR cit.itemname LIKE '%cryoprecipitate%' OR cit.itemname LIKE '%platelets%')) ) SELECT CASE WHEN (SELECT patient_count FROM EligibleWithPCC) > 0 THEN (SELECT patient_count FROM EligibleWithPCC) WHEN (SELECT patient_count FROM EligibleWithOtherReversal) > 0 THEN (SELECT patient_count FROM EligibleWithOtherReversal) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "seven"
+            ]
+        ]
+    },
+    {
+        "task_id": "34",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to find the number of patients who may be eligible for a clinical study on targeted anti-MRSA therapy in ICU pneumonia. You want to include patients who meet all of the inclusion criteria and do not meet any of the exclusion criteria listed below during the same hospital admission. Inclusion Criteria: 1. Diagnosed with pneumonia 2. Required ICU admission during the same hospital admission 3. Received linezolid as targeted anti-MRSA therapy Exclusion Criteria: 1. Diagnosed with aspiration pneumonia or aspiration pneumonitis You want different variants of pneumonia (e.g., bacterial pneumonia, Klebsiella pneumonia, ventilator-associated pneumonia) treated as a single diagnosis category. If no patients meet all of the above criteria, you want to modify inclusion criterion 3 to: patients who received any other antibiotic commonly used for MRSA coverage in pneumonia. If still no patients are found, end the conversation. If certain conditions are missing from the database, you may ignore them during the conversation. Do not confuse the use of 'and' and 'or' when describing the conditions. You want the number of patients reported in words instead of numerals (e.g., 123 patients \u2192 one hundred and twenty-three).",
+        "gold_sql": "WITH PneumoniaICUAdmissions AS ( SELECT DISTINCT ad.patientid, ad.admissionid FROM admissiondiagnoses ad JOIN diagnosiscodes dc ON ad.icdcode = dc.icdcode AND ad.codeversion = dc.codeversion JOIN icuepisodes icu ON ad.admissionid = icu.admissionid WHERE dc.description LIKE '%pneumonia%' AND dc.description NOT LIKE '%aspiration%' AND ad.patientid NOT IN ( SELECT ad2.patientid FROM admissiondiagnoses ad2 JOIN diagnosiscodes dc2 ON ad2.icdcode = dc2.icdcode AND ad2.codeversion = dc2.codeversion WHERE dc2.description LIKE '%pneumonitis due to inhalation%' OR dc2.description LIKE '%aspiration pneumonia%' OR dc2.description LIKE '%aspiration pneumonitis%' ) ), EligibleWithLinezolid AS ( SELECT COUNT(DISTINCT p.patientid) AS patient_count FROM PneumoniaICUAdmissions p WHERE EXISTS ( SELECT 1 FROM medicationorders mo WHERE mo.admissionid = p.admissionid AND mo.medicationname LIKE '%linezolid%' ) ), EligibleWithOtherAntiMRSA AS ( SELECT COUNT(DISTINCT p.patientid) AS patient_count FROM PneumoniaICUAdmissions p WHERE EXISTS ( SELECT 1 FROM medicationorders mo WHERE mo.admissionid = p.admissionid AND ( (mo.medicationname LIKE '%vancomycin%' AND mo.medicationname NOT LIKE '%oral%') OR mo.medicationname LIKE '%trimethoprim%sulfamethoxazole%' OR mo.medicationname LIKE '%bactrim%' OR mo.medicationname LIKE '%doxycycline%' OR mo.medicationname LIKE '%clindamycin%' OR mo.medicationname LIKE '%daptomycin%' OR mo.medicationname LIKE '%teicoplanin%' ) AND mo.medicationname NOT LIKE '%linezolid%' ) ) SELECT CASE WHEN (SELECT patient_count FROM EligibleWithLinezolid) > 0 THEN (SELECT patient_count FROM EligibleWithLinezolid) WHEN (SELECT patient_count FROM EligibleWithOtherAntiMRSA) > 0 THEN (SELECT patient_count FROM EligibleWithOtherAntiMRSA) ELSE NULL END AS answer;",
+        "gold_answer": [
+            [
+                "seven"
+            ]
+        ]
+    },
+    {
+        "task_id": "35",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to patient diagnoses. Specifically, you want to find the three most frequently recorded diagnosis names in the emergency information table. If the emergency information table exists in the database, you want to identify the three most frequently recorded diagnosis names based on clinical diagnosis names. If the emergency information table does not exist in the database, you want to identify the three most frequently occurring diagnosis names for cases where the hospital admission location is the emergency room. If multiple diagnosis names occur with the same frequency, you want to know all of them. You want the results to reflect the exact diagnosis names as recorded in the database.",
+        "gold_sql": "SELECT description FROM ( SELECT d.description, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) as rank FROM hospitaladmissions ha JOIN admissiondiagnoses ad ON ha.admissionid = ad.admissionid JOIN diagnosiscodes d ON ad.icdcode = d.icdcode AND ad.codeversion = d.codeversion WHERE ha.admitsource = 'emergency room' GROUP BY d.description ) AS ranked WHERE rank <= 3;",
+        "gold_answer": [
+            [
+                "unspecified essential hypertension"
+            ],
+            [
+                "tobacco use disorder"
+            ],
+            [
+                "other and unspecified hyperlipidemia"
+            ]
+        ]
+    },
+    {
+        "task_id": "36",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to patient procedures. Specifically, you want to know the total number of procedures performed by the Department of Cardiovascular and Thoracic Surgery. If the performing department information is available in the database, you want to know the number of procedures performed by that department. If the performing department information is not available in the database, you want to ignore department information and know the number of procedures that include the word 'coronary' in their names. You want the number of cases reported in words instead of numerals (e.g., 123 patients => one hundred and twenty-three).",
+        "gold_sql": "SELECT COUNT(*) AS procedure_count FROM admissionprocedures p JOIN procedurecodes d ON p.icdcode = d.icdcode AND p.codeversion = d.codeversion WHERE d.description LIKE '%coronary%';",
+        "gold_answer": [
+            [
+                "thirty-five"
+            ]
+        ]
+    },
+    {
+        "task_id": "37",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to patient adverse reactions. Specifically, you want to identify the most frequently reported adverse reaction symptom in the adverse drug reaction table. If the adverse drug reaction table exists in the database, you want to know the most frequently occurring content based on the adverse drug reaction information column. If the adverse drug reaction table does not exist in the database, you want to know the most frequently occurring diagnosis based on diagnosis names containing \"adverse effect\" in the diagnosis table. If multiple diagnosis names occur with the same highest frequency, you want to know all of them. You want the answers to be based on the exact form of information recorded in the database.",
+        "gold_sql": "SELECT description FROM ( SELECT d.description, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) as rank FROM admissiondiagnoses ad JOIN diagnosiscodes d ON ad.icdcode = d.icdcode AND ad.codeversion = d.codeversion WHERE d.description LIKE '%adverse effect%' GROUP BY d.description ) AS ranked WHERE rank <= 1;",
+        "gold_answer": [
+            [
+                "adverse effect of anticoagulants, initial encounter"
+            ]
+        ]
+    },
+    {
+        "task_id": "38",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore patient appointment-related information. Specifically, you are interested in the appointment dates for patient ID 10038081. If the patient's appointment date information is available in the database, you want to know the earliest appointment date. If the patient\u2019s appointment date information is not available in the database, you want to know the patient\u2019s last hospital discharge date. You want the answer in the exact time format recorded in the database.",
+        "gold_sql": "SELECT dischargedatetime FROM hospitaladmissions WHERE patientid = 10038081 AND dischargedatetime IS NOT NULL ORDER BY dischargedatetime DESC LIMIT 1;",
+        "gold_answer": [
+            [
+                "2100-10-15 00:00:00"
+            ]
+        ]
+    },
+    {
+        "task_id": "39",
+        "task_type": "adapt",
+        "db_id": "mimic_iv_star",
+        "instruction": "Your goal is to explore statistics related to patient allergies. Specifically, you first want to identify allergies from the allergy_list table. If the allergy_list table exists in the database, find the top 5 most common allergy descriptions recorded there. If the allergy_list table does not exist, then use the admissiondiagnoses table to find the top 5 most common diagnoses containing 'allergy' or 'hypersensitivity' in the description from diagnosiscodes. If multiple diagnosis names occur with the same frequency, you want to know all of them. You want the exact descriptions as recorded in the database.",
+        "gold_sql": "WITH allergy_descriptions AS ( SELECT dd.description, COUNT(*) AS frequency FROM admissiondiagnoses d JOIN diagnosiscodes dd ON d.icdcode = dd.icdcode AND d.codeversion = dd.codeversion WHERE dd.description LIKE '%allergy%' OR dd.description LIKE '%hypersensitivity%' GROUP BY dd.description ), ranked_descriptions AS ( SELECT description, frequency, DENSE_RANK() OVER (ORDER BY frequency DESC) AS rnk FROM allergy_descriptions ) SELECT description FROM ranked_descriptions WHERE rnk <= 5 ORDER BY frequency DESC, description ASC;",
+        "gold_answer": [
+            [
+                "personal history of allergy to penicillin"
+            ]
+        ]
+    }
+]
